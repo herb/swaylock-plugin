@@ -26,6 +26,13 @@ void clear_password_buffer(struct swaylock_password *pw) {
 	pw->len = 0;
 }
 
+void reset_reveal_state(struct swaylock_state *state) {
+	struct swaylock_surface *surface;
+	wl_list_for_each(surface, &state->surfaces, link) {
+		reveal_apply(&surface->reveal, REVEAL_EVENT_CLEAR);
+	}
+}
+
 static bool backspace(struct swaylock_password *pw) {
 	if (pw->len != 0) {
 		pw->len -= utf8_last_size(pw->buffer);
@@ -89,6 +96,7 @@ static void clear_password(void *data) {
 	state->input_state = INPUT_STATE_CLEAR;
 	schedule_input_idle(state);
 	clear_password_buffer(&state->password);
+	reset_reveal_state(state);
 	damage_state(state);
 }
 
@@ -119,6 +127,7 @@ static void submit_password(struct swaylock_state *state) {
 	state->auth_state = AUTH_STATE_VALIDATING;
 	cancel_password_clear(state);
 	cancel_input_idle(state);
+	reset_reveal_state(state);
 
 	if (!write_comm_request(&state->password)) {
 		state->auth_state = AUTH_STATE_INVALID;
@@ -158,6 +167,9 @@ void swaylock_handle_key(struct swaylock_state *state,
 				cancel_password_clear(state);
 			}
 		}
+		if (state->password.len == 0) {
+			reset_reveal_state(state);
+		}
 		schedule_input_idle(state);
 		damage_state(state);
 		break;
@@ -165,6 +177,7 @@ void swaylock_handle_key(struct swaylock_state *state,
 		clear_password_buffer(&state->password);
 		state->input_state = INPUT_STATE_CLEAR;
 		cancel_password_clear(state);
+		reset_reveal_state(state);
 		schedule_input_idle(state);
 		damage_state(state);
 		break;
@@ -198,6 +211,7 @@ void swaylock_handle_key(struct swaylock_state *state,
 			clear_password_buffer(&state->password);
 			state->input_state = INPUT_STATE_CLEAR;
 			cancel_password_clear(state);
+			reset_reveal_state(state);
 			schedule_input_idle(state);
 			damage_state(state);
 			break;

@@ -216,6 +216,12 @@ Locks your Wayland session.
 *--separator-color* <rrggbb[aa]>
 	Sets the color of the lines that separate highlight segments.
 
+*--show-password-toggle*
+	Show a small eye icon beneath the unlock indicator. Clicking the icon
+	reveals the current password on that output; clicking it again hides it.
+	The password is hidden again on submit, clear, and authentication failure.
+	This option is disabled by default.
+
 *--text-color* <rrggbb[aa]>
 	Sets the color of the text.
 

@@ -8,6 +8,8 @@
 
 struct loop;
 struct loop_timer;
+struct swaylock_surface;
+struct wp_cursor_shape_device_v1;
 
 struct swaylock_xkb {
 	bool caps_lock;
@@ -21,6 +23,8 @@ struct swaylock_seat {
 	struct swaylock_state *state;
 	struct wl_pointer *pointer;
 	struct wl_keyboard *keyboard;
+	struct wp_cursor_shape_device_v1 *cursor_shape_pointer;
+	struct wl_surface *cursor_surface;
 	int32_t repeat_period_ms;
 	int32_t repeat_delay_ms;
 	uint32_t repeat_sym;
@@ -30,6 +34,11 @@ struct swaylock_seat {
 	int64_t last_interval;
 	wl_fixed_t interval_start_x, interval_start_y;
 	wl_fixed_t last_mouse_x, last_mouse_y;
+	/* Current pointer focus and surface-local coordinates, independent of the
+	 * grace-period hysteresis tracking above. */
+	struct swaylock_surface *pointer_surface;
+	bool pointer_on_indicator;
+	wl_fixed_t pointer_x, pointer_y;
 };
 
 extern const struct wl_seat_listener seat_listener;

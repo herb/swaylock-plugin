@@ -33,6 +33,7 @@ wayland_protos = dependency('wayland-protocols', version: '>=1.47', fallback: 'w
 wayland_scanner = dependency('wayland-scanner', version: '>=1.15.0', native: true)
 xkbcommon = dependency('xkbcommon')
 cairo = dependency('cairo')
+wayland_cursor = dependency('wayland-cursor')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
 libpam = cc.find_library('pam', required: get_option('pam'))
 crypt = cc.find_library('crypt', required: not libpam.found())
@@ -85,6 +86,10 @@ proxy_protocols = [
 
 client_protocols = [
 	wl_protocol_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+	wl_protocol_dir / 'staging/cursor-shape/cursor-shape-v1.xml',
+	# cursor-shape-v1's generated code references the tablet-tool interface
+	# symbol exposed by wp_cursor_shape_manager_v1.get_tablet_tool_v2.
+	wl_protocol_dir / 'stable/tablet/tablet-v2.xml',
 ] + proxy_protocols
 
 server_protocols = [
@@ -124,6 +129,7 @@ dependencies = [
 	rt,
 	xkbcommon,
 	wayland_client,
+	wayland_cursor,
 	wayland_server,
 ]
 
@@ -140,6 +146,7 @@ sources = [
 	'password-buffer.c',
 	'pool-buffer.c',
 	'render.c',
+	'reveal.c',
 	'seat.c',
 	'setsid.c',
 	'unicode.c',
@@ -157,6 +164,12 @@ else
 endif
 
 swaylock_inc = include_directories('include')
+
+reveal_test = executable('test-reveal',
+	['tests/test-reveal.c', 'reveal.c', 'unicode.c'],
+	include_directories: [swaylock_inc],
+)
+test('reveal', reveal_test)
 
 executable('swaylock-plugin',
 	sources + protos_src,

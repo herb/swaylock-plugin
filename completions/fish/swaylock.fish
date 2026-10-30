@@ -45,6 +45,7 @@ complete -c swaylock-plugin -l ring-wrong-color            --description "Sets t
 complete -c swaylock-plugin -l scaling                -s s --description "Image scaling mode: stretch, fill, fit, center, tile, solid_color."
 complete -c swaylock-plugin -l separator-color             --description "Sets the color of the lines that separate highlight segments."
 complete -c swaylock-plugin -l show-failed-attempts   -s F --description "Show current count of failed authentication attempts."
+complete -c swaylock-plugin -l show-password-toggle        --description "Show an eye icon that reveals the password when clicked."
 complete -c swaylock-plugin -l show-keyboard-layout   -s k --description "Display the current xkb layout while typing."
 complete -c swaylock-plugin -l text-caps-lock-color        --description "Sets the color of the text when Caps Lock is active."
 complete -c swaylock-plugin -l text-clear-color            --description "Sets the color of the text when cleared."

@@ -73,6 +73,7 @@ _swaylock-plugin()
     --separator-color
     --show-failed-attempts
     --show-keyboard-layout
+    --show-password-toggle
     --text-caps-lock-color
     --text-clear-color
     --text-color

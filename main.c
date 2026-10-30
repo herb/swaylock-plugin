@@ -249,6 +249,9 @@ static void create_surface(struct swaylock_surface *surface) {
 	assert(surface->subsurface);
 	wl_subsurface_set_sync(surface->subsurface);
 
+	reveal_apply(&surface->reveal, REVEAL_EVENT_CLEAR);
+	surface->reveal_hit_valid = false;
+
 	surface->ext_session_lock_surface_v1 = ext_session_lock_v1_get_lock_surface(
 			state->ext_session_lock_v1, surface->surface, surface->output);
 	ext_session_lock_surface_v1_add_listener(surface->ext_session_lock_surface_v1,
@@ -590,6 +593,14 @@ static void handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, wp_viewporter_interface.name) == 0) {
 		state->forward.viewporter = wl_registry_bind(registry, name,
 			&wp_viewporter_interface, version >= 1 ? 1 : version);
+	} else if (strcmp(interface, wp_cursor_shape_manager_v1_interface.name) == 0) {
+		/* Only bind the cursor-shape manager when the reveal control can use
+		 * a visible cursor; with the option disabled the locker must behave
+		 * exactly as before. */
+		if (state->args.show_password_toggle) {
+			state->cursor_shape_manager = wl_registry_bind(registry, name,
+				&wp_cursor_shape_manager_v1_interface, 1);
+		}
 	} else if (strcmp(interface, wp_color_manager_v1_interface.name) == 0) {
 		assert(!state->forward.color_management); // only expected once
 
@@ -812,6 +823,7 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		LO_RING_VER_COLOR,
 		LO_RING_WRONG_COLOR,
 		LO_SEP_COLOR,
+		LO_SHOW_PASSWORD_TOGGLE,
 		LO_TEXT_COLOR,
 		LO_TEXT_CLEAR_COLOR,
 		LO_TEXT_CAPS_LOCK_COLOR,
@@ -873,6 +885,7 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		{"ring-ver-color", required_argument, NULL, LO_RING_VER_COLOR},
 		{"ring-wrong-color", required_argument, NULL, LO_RING_WRONG_COLOR},
 		{"separator-color", required_argument, NULL, LO_SEP_COLOR},
+		{"show-password-toggle", no_argument, NULL, LO_SHOW_PASSWORD_TOGGLE},
 		{"text-color", required_argument, NULL, LO_TEXT_COLOR},
 		{"text-clear-color", required_argument, NULL, LO_TEXT_CLEAR_COLOR},
 		{"text-caps-lock-color", required_argument, NULL, LO_TEXT_CAPS_LOCK_COLOR},
@@ -994,6 +1007,8 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 			"Sets the color of the ring of the indicator when invalid.\n"
 		"  --separator-color <color>        "
 			"Sets the color of the lines that separate highlight segments.\n"
+		"  --show-password-toggle           "
+			"Show an eye icon that reveals the password when clicked.\n"
 		"  --text-color <color>             "
 			"Sets the color of the text.\n"
 		"  --text-clear-color <color>       "
@@ -1268,6 +1283,11 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 				state->args.colors.separator = parse_color(optarg);
 			}
 			break;
+		case LO_SHOW_PASSWORD_TOGGLE:
+			if (state) {
+				state->args.show_password_toggle = true;
+			}
+			break;
 		case LO_TEXT_COLOR:
 			if (state) {
 				state->args.colors.text.input = parse_color(optarg);
@@ -1445,6 +1465,7 @@ static void comm_in(int fd, short mask, void *data) {
 			state.auth_state = AUTH_STATE_INVALID;
 			schedule_auth_idle(&state);
 			++state.failed_attempts;
+			reset_reveal_state(&state);
 			damage_state(&state);
 		}
 	} else if (mask & (POLLHUP | POLLERR)) {
@@ -2270,6 +2291,7 @@ int main(int argc, char **argv) {
 		.show_keyboard_layout = false,
 		.hide_keyboard_layout = false,
 		.show_failed_attempts = false,
+		.show_password_toggle = false,
 		.indicator_idle_visible = false,
 		.ready_fd = -1,
 		.plugin_command = NULL,

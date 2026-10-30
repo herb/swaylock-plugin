@@ -4,11 +4,16 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
+#include <wayland-cursor.h>
 #include <xkbcommon/xkbcommon.h>
 #include "log.h"
 #include "swaylock.h"
 #include "seat.h"
 #include "loop.h"
+
+#ifndef BTN_LEFT
+#define BTN_LEFT 0x110
+#endif
 
 static void keyboard_keymap(void *data, struct wl_keyboard *wl_keyboard,
 		uint32_t format, int32_t fd, uint32_t size) {
@@ -155,11 +160,121 @@ static const struct wl_keyboard_listener keyboard_listener = {
 	.repeat_info = keyboard_repeat_info,
 };
 
+static struct swaylock_surface *pointer_lookup_surface(
+		struct swaylock_state *state, struct wl_surface *surface,
+		bool *on_indicator) {
+	*on_indicator = false;
+	if (!surface) {
+		return NULL;
+	}
+	struct swaylock_surface *candidate;
+	wl_list_for_each(candidate, &state->surfaces, link) {
+		if (candidate->surface == surface) {
+			return candidate;
+		}
+		if (candidate->child == surface) {
+			*on_indicator = true;
+			return candidate;
+		}
+	}
+	return NULL;
+}
+
+/* Show a normal pointer cursor when the reveal control is enabled. Prefer
+ * wp_cursor_shape_v1 (compositor-provided theme) and fall back to
+ * libwayland-cursor. With the option disabled this keeps the original hidden
+ * cursor behaviour. */
+static void set_pointer_cursor(struct swaylock_seat *seat, uint32_t serial,
+		struct swaylock_surface *surface) {
+	struct swaylock_state *state = seat->state;
+	if (!seat->pointer) {
+		return;
+	}
+	if (!state->args.show_password_toggle) {
+		wl_pointer_set_cursor(seat->pointer, serial, NULL, 0, 0);
+		return;
+	}
+
+	if (!seat->cursor_shape_pointer && state->cursor_shape_manager) {
+		seat->cursor_shape_pointer = wp_cursor_shape_manager_v1_get_pointer(
+			state->cursor_shape_manager, seat->pointer);
+	}
+	if (seat->cursor_shape_pointer) {
+		wp_cursor_shape_device_v1_set_shape(seat->cursor_shape_pointer,
+			serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
+		return;
+	}
+
+	if (!state->shm) {
+		wl_pointer_set_cursor(seat->pointer, serial, NULL, 0, 0);
+		return;
+	}
+
+	int size = 24 * (surface ? surface->scale : 1);
+	if (size < 16) {
+		size = 16;
+	}
+	if (!state->cursor_theme || state->cursor_theme_size != size) {
+		if (state->cursor_theme) {
+			wl_cursor_theme_destroy(state->cursor_theme);
+		}
+		state->cursor = NULL;
+		state->cursor_theme = wl_cursor_theme_load(NULL, size, state->shm);
+		state->cursor_theme_size = size;
+	}
+	if (!state->cursor && state->cursor_theme) {
+		state->cursor = wl_cursor_theme_get_cursor(state->cursor_theme,
+			"left_ptr");
+		if (!state->cursor) {
+			state->cursor = wl_cursor_theme_get_cursor(state->cursor_theme,
+				"default");
+		}
+	}
+	if (state->cursor && state->cursor->image_count > 0) {
+		struct wl_cursor_image *image = state->cursor->images[0];
+		if (!seat->cursor_surface) {
+			seat->cursor_surface =
+				wl_compositor_create_surface(state->compositor);
+		}
+		if (seat->cursor_surface) {
+			wl_surface_attach(seat->cursor_surface,
+				wl_cursor_image_get_buffer(image), 0, 0);
+			wl_surface_damage_buffer(seat->cursor_surface,
+				0, 0, INT32_MAX, INT32_MAX);
+			wl_surface_commit(seat->cursor_surface);
+			wl_pointer_set_cursor(seat->pointer, serial,
+				seat->cursor_surface,
+				image->hotspot_x, image->hotspot_y);
+			return;
+		}
+	}
+	wl_pointer_set_cursor(seat->pointer, serial, NULL, 0, 0);
+}
+
+static bool pointer_hits_reveal_icon(struct swaylock_seat *seat) {
+	struct swaylock_surface *surface = seat->pointer_surface;
+	if (!surface || !seat->state->args.show_password_toggle ||
+			!surface->reveal_hit_valid) {
+		return false;
+	}
+	double x = wl_fixed_to_double(seat->pointer_x);
+	double y = wl_fixed_to_double(seat->pointer_y);
+	double offset_x = seat->pointer_on_indicator
+		? surface->indicator_subsurf_x : 0.0;
+	double offset_y = seat->pointer_on_indicator
+		? surface->indicator_subsurf_y : 0.0;
+	return reveal_hit_test(&surface->reveal_hit, x, y, offset_x, offset_y);
+}
+
 static void wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, struct wl_surface *surface,
 		wl_fixed_t surface_x, wl_fixed_t surface_y) {
 	struct swaylock_seat *seat = data;
-	wl_pointer_set_cursor(wl_pointer, serial, NULL, 0, 0);
+	seat->pointer_x = surface_x;
+	seat->pointer_y = surface_y;
+	seat->pointer_surface = pointer_lookup_surface(seat->state, surface,
+		&seat->pointer_on_indicator);
+	set_pointer_cursor(seat, serial, seat->pointer_surface);
 	if (!seat->state->grace_timer) {
 		return;
 	}
@@ -174,12 +289,19 @@ static void wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
 
 static void wl_pointer_leave(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, struct wl_surface *surface) {
-	// Who cares
+	struct swaylock_seat *seat = data;
+	seat->pointer_surface = NULL;
+	seat->pointer_on_indicator = false;
 }
 
 static void wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 		uint32_t time, wl_fixed_t surface_x, wl_fixed_t surface_y) {
 	struct swaylock_seat *seat = data;
+	seat->pointer_x = surface_x;
+	seat->pointer_y = surface_y;
+
+	bool over_icon = pointer_hits_reveal_icon(seat);
+
 	if (!seat->state->grace_timer) {
 		return;
 	}
@@ -194,7 +316,7 @@ static void wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 	float dx = wl_fixed_to_double(surface_x - seat->interval_start_x);
 	float dy = wl_fixed_to_double(surface_y - seat->interval_start_y);
 	float thresh = seat->state->args.grace_pointer_hysteresis;
-	if (dx * dx + dy * dy >= thresh * thresh) {
+	if (!over_icon && dx * dx + dy * dy >= thresh * thresh) {
 		/* Mouse moved more than hysteresis value in a one-second time period;
 		 * this is probably a deliberate action and not noise or a minor tremor */
 		swaylock_log(LOG_DEBUG, "Significant mouse motion (%f logical px) during grace period, unlocking",
@@ -206,8 +328,21 @@ static void wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 }
 
 static void wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
-		uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
+		uint32_t serial, uint32_t time, uint32_t button, uint32_t button_state) {
 	struct swaylock_seat *seat = data;
+
+	/* A click on the eye icon only toggles reveal on that output; it must not
+	 * unlock through the grace-period path. */
+	if (button == BTN_LEFT &&
+			button_state == WL_POINTER_BUTTON_STATE_PRESSED &&
+			pointer_hits_reveal_icon(seat)) {
+		struct swaylock_surface *surface = seat->pointer_surface;
+		reveal_apply(&surface->reveal, REVEAL_EVENT_TOGGLE);
+		surface->dirty = true;
+		render(surface);
+		return;
+	}
+
 	if (seat->state->grace_timer) {
 		/* unlock during grace period on click */
 		swaylock_log(LOG_DEBUG, "Mouse button action during grace period, unlocking");
@@ -267,8 +402,18 @@ static void seat_handle_capabilities(void *data, struct wl_seat *wl_seat,
 		enum wl_seat_capability caps) {
 	struct swaylock_seat *seat = data;
 	if (seat->pointer) {
+		if (seat->cursor_shape_pointer) {
+			wp_cursor_shape_device_v1_destroy(seat->cursor_shape_pointer);
+			seat->cursor_shape_pointer = NULL;
+		}
 		wl_pointer_release(seat->pointer);
 		seat->pointer = NULL;
+		seat->pointer_surface = NULL;
+		seat->pointer_on_indicator = false;
+		if (seat->cursor_surface) {
+			wl_surface_destroy(seat->cursor_surface);
+			seat->cursor_surface = NULL;
+		}
 	}
 	if (seat->keyboard) {
 		wl_keyboard_release(seat->keyboard);

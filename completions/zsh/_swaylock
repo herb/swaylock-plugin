@@ -50,6 +50,7 @@ _arguments -s \
 	'(--separator-color)'--separator-color'[Sets the color of the lines that separate highlight segments]:color:' \
 	'(--show-failed-attempts -F)'{--show-failed-attempts,-F}'[Show current count of failed authentication attempts]' \
 	'(--show-keyboard-layout -k)'{--show-keyboard-layout,-k}'[Display the current xkb layout while typing]' \
+	'(--show-password-toggle)'--show-password-toggle'[Show an eye icon that reveals the password when clicked]' \
 	'(--text-caps-lock-color)'--text-caps-lock-color'[Sets the color of the text when Caps Lock is active]:color:' \
 	'(--text-clear-color)'--text-clear-color'[Sets the color of the text when cleared]:color:' \
 	'(--text-color)'--text-color'[Sets the color of the text]:color:' \

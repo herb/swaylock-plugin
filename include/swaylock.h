@@ -8,12 +8,17 @@
 #include "cairo.h"
 #include "pool-buffer.h"
 #include "seat.h"
+#include "reveal.h"
 #include "linux-dmabuf-unstable-v1-client-protocol.h"
 #include "wayland-drm-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "color-management-v1-client-protocol.h"
 #include "color-representation-v1-client-protocol.h"
+#include "cursor-shape-v1-client-protocol.h"
+
+struct wl_cursor;
+struct wl_cursor_theme;
 
 // Indicator state: status of authentication attempt
 enum auth_state {
@@ -73,6 +78,7 @@ struct swaylock_args {
 	bool show_keyboard_layout;
 	bool hide_keyboard_layout;
 	bool show_failed_attempts;
+	bool show_password_toggle;
 	bool daemonize;
 	int ready_fd;
 	bool indicator_idle_visible;
@@ -439,6 +445,10 @@ struct swaylock_state {
 	struct wl_compositor *compositor;
 	struct wl_subcompositor *subcompositor;
 	struct wl_shm *shm;
+	struct wp_cursor_shape_manager_v1 *cursor_shape_manager;
+	struct wl_cursor_theme *cursor_theme;
+	struct wl_cursor *cursor;
+	int cursor_theme_size;
 	struct zwp_linux_dmabuf_feedback_v1 *dmabuf_default_feedback;
 	struct wl_list surfaces;
 	struct wl_list images;
@@ -487,6 +497,14 @@ struct swaylock_surface {
 	struct wp_image_description_v1 *color_output_description;
 	uint32_t last_fractional_scale; /* is zero if nothing received yet */
 	struct pool_buffer indicator_buffers[2];
+	struct reveal_state reveal;
+	/* Icon hit-test geometry in device pixels; valid only while the reveal
+	 * control is drawn. */
+	struct reveal_layout reveal_hit;
+	bool reveal_hit_valid;
+	/* Logical position of the indicator subsurface, used to translate
+	 * pointer coordinates when the pointer targets the subsurface. */
+	int32_t indicator_subsurf_x, indicator_subsurf_y;
 	bool created;
 	bool dirty;
 	uint32_t width, height;
@@ -599,6 +617,7 @@ void swaylock_handle_key(struct swaylock_state *state,
 void init_surface_if_ready(struct swaylock_surface *surface);
 void render(struct swaylock_surface *surface);
 void damage_state(struct swaylock_state *state);
+void reset_reveal_state(struct swaylock_state *state);
 void clear_password_buffer(struct swaylock_password *pw);
 void schedule_auth_idle(struct swaylock_state *state);
 
