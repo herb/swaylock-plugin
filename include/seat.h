@@ -35,9 +35,10 @@ struct swaylock_seat {
 	wl_fixed_t interval_start_x, interval_start_y;
 	wl_fixed_t last_mouse_x, last_mouse_y;
 	/* Current pointer focus and surface-local coordinates, independent of the
-	 * grace-period hysteresis tracking above. */
-	struct swaylock_surface *pointer_surface;
-	bool pointer_on_indicator;
+	 * grace-period hysteresis tracking above. Only the wl_surface is kept and
+	 * resolved against state->surfaces on each event, so an output destroyed
+	 * while focused can never leave a dangling swaylock_surface pointer. */
+	struct wl_surface *pointer_wl_surface;
 	wl_fixed_t pointer_x, pointer_y;
 };
 

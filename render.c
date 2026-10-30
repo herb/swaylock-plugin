@@ -171,10 +171,14 @@ static bool render_frame(struct swaylock_surface *surface) {
 	char *text = NULL;
 	const char *layout_text = NULL;
 
+	// With the reveal control enabled, keep the indicator (and so the eye
+	// icon) up while there is typed input, so it can still be clicked after
+	// the 1.5 s keypress highlight goes idle.
 	bool draw_indicator = state->args.show_indicator &&
 		(state->auth_state != AUTH_STATE_IDLE ||
 			state->input_state != INPUT_STATE_IDLE ||
-			state->args.indicator_idle_visible);
+			state->args.indicator_idle_visible ||
+			(state->args.show_password_toggle && state->password.len > 0));
 
 	bool reveal_enabled = state->args.show_password_toggle;
 
@@ -345,6 +349,7 @@ static bool render_frame(struct swaylock_surface *surface) {
 			(state->args.radius + state->args.thickness);
 	}
 
+	surface->reveal_hit_valid = false;
 	surface->indicator_subsurf_x = subsurf_xpos;
 	surface->indicator_subsurf_y = subsurf_ypos;
 	surface->reveal_hit = reveal_layout;
@@ -373,6 +378,8 @@ static bool render_frame(struct swaylock_surface *surface) {
 	double circle_cx = draw_reveal
 		? reveal_layout.circle_cx_px : (double)(buffer_width / 2);
 	double circle_cy = buffer_diameter / 2.0;
+	// Upstream draws the keypress highlight around a non-truncated center.
+	double highlight_cx = draw_reveal ? circle_cx : buffer_width / 2.0;
 
 	if (draw_indicator) {
 		// Fill inner circle
@@ -440,21 +447,21 @@ static bool render_frame(struct swaylock_surface *surface) {
 			cairo_set_line_width(cairo, 2.0 * surface->scale);
 			cairo_set_source_u32(cairo, state->args.colors.separator);
 			cairo_move_to(cairo,
-				circle_cx + cos(highlight_start) * inner_radius,
+				highlight_cx + cos(highlight_start) * inner_radius,
 				circle_cy + sin(highlight_start) * inner_radius
 			);
 			cairo_line_to(cairo,
-				circle_cx + cos(highlight_start) * outer_radius,
+				highlight_cx + cos(highlight_start) * outer_radius,
 				circle_cy + sin(highlight_start) * outer_radius
 			);
 			cairo_stroke(cairo);
 
 			cairo_move_to(cairo,
-				circle_cx + cos(highlight_start + TYPE_INDICATOR_RANGE) * inner_radius,
+				highlight_cx + cos(highlight_start + TYPE_INDICATOR_RANGE) * inner_radius,
 				circle_cy + sin(highlight_start + TYPE_INDICATOR_RANGE) * inner_radius
 			);
 			cairo_line_to(cairo,
-				circle_cx + cos(highlight_start + TYPE_INDICATOR_RANGE) * outer_radius,
+				highlight_cx + cos(highlight_start + TYPE_INDICATOR_RANGE) * outer_radius,
 				circle_cy + sin(highlight_start + TYPE_INDICATOR_RANGE) * outer_radius
 			);
 			cairo_stroke(cairo);

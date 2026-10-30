@@ -210,10 +210,8 @@ static void set_pointer_cursor(struct swaylock_seat *seat, uint32_t serial,
 		return;
 	}
 
-	int size = 24 * (surface ? surface->scale : 1);
-	if (size < 16) {
-		size = 16;
-	}
+	int cursor_scale = (surface && surface->scale > 0) ? surface->scale : 1;
+	int size = 24 * cursor_scale;
 	if (!state->cursor_theme || state->cursor_theme_size != size) {
 		if (state->cursor_theme) {
 			wl_cursor_theme_destroy(state->cursor_theme);
@@ -237,6 +235,7 @@ static void set_pointer_cursor(struct swaylock_seat *seat, uint32_t serial,
 				wl_compositor_create_surface(state->compositor);
 		}
 		if (seat->cursor_surface) {
+			wl_surface_set_buffer_scale(seat->cursor_surface, cursor_scale);
 			wl_surface_attach(seat->cursor_surface,
 				wl_cursor_image_get_buffer(image), 0, 0);
 			wl_surface_damage_buffer(seat->cursor_surface,
@@ -244,26 +243,42 @@ static void set_pointer_cursor(struct swaylock_seat *seat, uint32_t serial,
 			wl_surface_commit(seat->cursor_surface);
 			wl_pointer_set_cursor(seat->pointer, serial,
 				seat->cursor_surface,
-				image->hotspot_x, image->hotspot_y);
+				image->hotspot_x / cursor_scale,
+				image->hotspot_y / cursor_scale);
 			return;
 		}
 	}
 	wl_pointer_set_cursor(seat->pointer, serial, NULL, 0, 0);
 }
 
-static bool pointer_hits_reveal_icon(struct swaylock_seat *seat) {
-	struct swaylock_surface *surface = seat->pointer_surface;
-	if (!surface || !seat->state->args.show_password_toggle ||
-			!surface->reveal_hit_valid) {
-		return false;
+static struct swaylock_surface *pointer_focus(struct swaylock_seat *seat,
+		bool *on_indicator) {
+	*on_indicator = false;
+	if (!seat->pointer_wl_surface) {
+		return NULL;
+	}
+	return pointer_lookup_surface(seat->state, seat->pointer_wl_surface,
+		on_indicator);
+}
+
+static struct swaylock_surface *pointer_hits_reveal_icon(
+		struct swaylock_seat *seat) {
+	if (!seat->state->args.show_password_toggle) {
+		return NULL;
+	}
+	bool on_indicator;
+	struct swaylock_surface *surface = pointer_focus(seat, &on_indicator);
+	if (!surface || !surface->reveal_hit_valid) {
+		return NULL;
 	}
 	double x = wl_fixed_to_double(seat->pointer_x);
 	double y = wl_fixed_to_double(seat->pointer_y);
-	double offset_x = seat->pointer_on_indicator
-		? surface->indicator_subsurf_x : 0.0;
-	double offset_y = seat->pointer_on_indicator
-		? surface->indicator_subsurf_y : 0.0;
-	return reveal_hit_test(&surface->reveal_hit, x, y, offset_x, offset_y);
+	double offset_x = on_indicator ? surface->indicator_subsurf_x : 0.0;
+	double offset_y = on_indicator ? surface->indicator_subsurf_y : 0.0;
+	if (!reveal_hit_test(&surface->reveal_hit, x, y, offset_x, offset_y)) {
+		return NULL;
+	}
+	return surface;
 }
 
 static void wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
@@ -272,9 +287,9 @@ static void wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
 	struct swaylock_seat *seat = data;
 	seat->pointer_x = surface_x;
 	seat->pointer_y = surface_y;
-	seat->pointer_surface = pointer_lookup_surface(seat->state, surface,
-		&seat->pointer_on_indicator);
-	set_pointer_cursor(seat, serial, seat->pointer_surface);
+	seat->pointer_wl_surface = surface;
+	bool on_indicator;
+	set_pointer_cursor(seat, serial, pointer_focus(seat, &on_indicator));
 	if (!seat->state->grace_timer) {
 		return;
 	}
@@ -290,8 +305,7 @@ static void wl_pointer_enter(void *data, struct wl_pointer *wl_pointer,
 static void wl_pointer_leave(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, struct wl_surface *surface) {
 	struct swaylock_seat *seat = data;
-	seat->pointer_surface = NULL;
-	seat->pointer_on_indicator = false;
+	seat->pointer_wl_surface = NULL;
 }
 
 static void wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
@@ -300,7 +314,7 @@ static void wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 	seat->pointer_x = surface_x;
 	seat->pointer_y = surface_y;
 
-	bool over_icon = pointer_hits_reveal_icon(seat);
+	bool over_icon = pointer_hits_reveal_icon(seat) != NULL;
 
 	if (!seat->state->grace_timer) {
 		return;
@@ -333,10 +347,10 @@ static void wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
 
 	/* A click on the eye icon only toggles reveal on that output; it must not
 	 * unlock through the grace-period path. */
+	struct swaylock_surface *surface = NULL;
 	if (button == BTN_LEFT &&
 			button_state == WL_POINTER_BUTTON_STATE_PRESSED &&
-			pointer_hits_reveal_icon(seat)) {
-		struct swaylock_surface *surface = seat->pointer_surface;
+			(surface = pointer_hits_reveal_icon(seat)) != NULL) {
 		reveal_apply(&surface->reveal, REVEAL_EVENT_TOGGLE);
 		surface->dirty = true;
 		render(surface);
@@ -408,8 +422,7 @@ static void seat_handle_capabilities(void *data, struct wl_seat *wl_seat,
 		}
 		wl_pointer_release(seat->pointer);
 		seat->pointer = NULL;
-		seat->pointer_surface = NULL;
-		seat->pointer_on_indicator = false;
+		seat->pointer_wl_surface = NULL;
 		if (seat->cursor_surface) {
 			wl_surface_destroy(seat->cursor_surface);
 			seat->cursor_surface = NULL;
