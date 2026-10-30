@@ -617,7 +617,7 @@ void swaylock_handle_key(struct swaylock_state *state,
 void init_surface_if_ready(struct swaylock_surface *surface);
 void render(struct swaylock_surface *surface);
 void damage_state(struct swaylock_state *state);
-void reset_reveal_state(struct swaylock_state *state);
+void show_indicator_for_pointer(struct swaylock_state *state);
 void clear_password_buffer(struct swaylock_password *pw);
 void schedule_auth_idle(struct swaylock_state *state);
 

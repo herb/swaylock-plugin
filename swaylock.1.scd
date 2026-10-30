@@ -219,8 +219,9 @@ Locks your Wayland session.
 *--show-password-toggle*
 	Show a small eye icon beneath the unlock indicator. Clicking the icon
 	reveals the current password on that output; clicking it again hides it.
-	The password is hidden again on submit, clear, and authentication failure.
-	This option is disabled by default.
+	The choice is kept until the screen is unlocked, so a revealed password
+	shows again whenever the indicator reappears. Pointer motion also shows the
+	indicator. This option is disabled by default.
 
 *--text-color* <rrggbb[aa]>
 	Sets the color of the text.

@@ -183,13 +183,8 @@ static bool render_frame(struct swaylock_surface *surface) {
 
 	bool reveal_enabled = state->args.show_password_toggle;
 
-	// The reveal control only exists while the indicator is visible. Drop the
-	// revealed state with it so a later indicator does not resurrect stale
-	// plaintext from an earlier interaction.
-	if (!draw_indicator && surface->reveal.revealed) {
-		reveal_apply(&surface->reveal, REVEAL_EVENT_CLEAR);
-	}
-
+	// Reveal state is kept for the whole lock session, so it reappears with
+	// the indicator after an idle timeout or password clear.
 	bool draw_reveal = reveal_enabled && draw_indicator;
 
 	if (draw_indicator) {

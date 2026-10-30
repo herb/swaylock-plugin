@@ -318,6 +318,9 @@ static void wl_pointer_motion(void *data, struct wl_pointer *wl_pointer,
 	seat->pointer_y = surface_y;
 
 	bool over_icon = pointer_hits_reveal_icon(seat) != NULL;
+	if (seat->state->args.show_password_toggle) {
+		show_indicator_for_pointer(seat->state);
+	}
 
 	if (!seat->state->grace_timer) {
 		return;

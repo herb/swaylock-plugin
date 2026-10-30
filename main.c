@@ -1474,7 +1474,6 @@ static void comm_in(int fd, short mask, void *data) {
 			state.auth_state = AUTH_STATE_INVALID;
 			schedule_auth_idle(&state);
 			++state.failed_attempts;
-			reset_reveal_state(&state);
 			damage_state(&state);
 		}
 	} else if (mask & (POLLHUP | POLLERR)) {
