@@ -46,13 +46,15 @@ jobs:
         env:
           DISTROBOX_NAME: swaylock-plugin-ci
           DISTROBOX_IMAGE: registry.fedoraproject.org/fedora:44
+        # Builds, runs meson tests, and verifies --version/ldd inside the box.
         run: ./ci/distrobox-build.sh
 
-      - name: verify version
+      - name: assert build distrobox is Fedora 44
         run: |
           set -euo pipefail
-          build/swaylock-plugin --version
-          build/swaylock-plugin --version | grep -q "1\.8\.7"
+          distrobox enter --no-tty swaylock-plugin-ci -- cat /etc/os-release \
+            | grep -qx 'VERSION_ID=44'
+
 
       - name: stage image inputs
         run: |

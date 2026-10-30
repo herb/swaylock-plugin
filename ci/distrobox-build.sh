@@ -68,4 +68,16 @@ if [[ ! -x "${binary}" ]]; then
 	exit 1
 fi
 
+# The binary links the box's Fedora system libraries, so verify the release
+# identity and linkage inside the same box rather than on the host/runner.
+echo "verifying ${binary} in ${distrobox_name}" >&2
+distrobox enter --no-tty "${distrobox_name}" -- bash -lc \
+	"set -euo pipefail
+	cd ${quoted_repo}
+	. /etc/os-release
+	echo \"distrobox OS: \${ID} \${VERSION_ID}\"
+	${quoted_build}/swaylock-plugin --version
+	${quoted_build}/swaylock-plugin --version | grep -q '1\\.8\\.7'
+	if ldd ${quoted_build}/swaylock-plugin | grep 'not found'; then exit 1; fi"
+
 echo "built ${binary}"
