@@ -21,5 +21,6 @@ LABEL org.opencontainers.image.title="swaylock-plugin" \
 	org.opencontainers.image.licenses="${LICENSES}" \
 	io.github.herb.fedora-version="${FEDORA_VERSION}"
 
-COPY swaylock-plugin /usr/bin/swaylock-plugin
-COPY LICENSE /LICENSE
+# actions/upload-artifact drops file modes, so set them explicitly.
+COPY --chmod=0755 swaylock-plugin /usr/bin/swaylock-plugin
+COPY --chmod=0644 LICENSE /LICENSE
