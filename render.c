@@ -133,23 +133,24 @@ static void reveal_eye_path(cairo_t *cairo, struct reveal_rect rect,
 
 static void draw_reveal_icon(cairo_t *cairo, struct reveal_rect rect,
 		bool revealed, double scale) {
-	double line_width = rect.height * 0.11;
-	if (line_width < 1.5 * scale) {
-		line_width = 1.5 * scale;
+	/* A thin, muted stroke so the control stays secondary to the indicator. */
+	double line_width = rect.height * 0.06;
+	if (line_width < 1.0 * scale) {
+		line_width = 1.0 * scale;
 	}
-	double shadow = 1.5 * scale;
+	double shadow = 1.0 * scale;
 
 	/* Subtle dark shadow so the control remains readable over video. */
 	cairo_save(cairo);
 	cairo_translate(cairo, shadow, shadow);
 	cairo_set_line_width(cairo, line_width);
-	cairo_set_source_rgba(cairo, 0, 0, 0, 0.65);
+	cairo_set_source_rgba(cairo, 0, 0, 0, 0.45);
 	reveal_eye_path(cairo, rect, revealed);
 	cairo_stroke(cairo);
 	cairo_restore(cairo);
 
 	cairo_set_line_width(cairo, line_width);
-	cairo_set_source_rgba(cairo, 1, 1, 1, 1);
+	cairo_set_source_rgba(cairo, 0.85, 0.85, 0.85, 0.6);
 	reveal_eye_path(cairo, rect, revealed);
 	cairo_stroke(cairo);
 }

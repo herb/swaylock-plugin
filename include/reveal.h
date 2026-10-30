@@ -61,14 +61,16 @@ bool reveal_rect_contains(struct reveal_rect rect, double x, double y);
 /*
  * Hit-test a pointer position given in surface-local logical coordinates.
  *
- * When the pointer is on the indicator subsurface its coordinates are relative
- * to that subsurface, so the subsurface offset is added before applying the
+ * The layout is in indicator-buffer device pixels. indicator_origin_x/y is the
+ * logical position of the indicator buffer in the pointer's surface: 0,0 when
+ * the pointer is on the indicator subsurface itself, or the subsurface offset
+ * when it is on the parent lock surface. It is subtracted before applying the
  * buffer scale. scale is the buffer scale (device pixels per logical pixel);
  * fractional values are accepted for completeness.
  */
 bool reveal_hit_test(const struct reveal_layout *layout,
 		double surface_x, double surface_y,
-		double subsurface_offset_x, double subsurface_offset_y);
+		double indicator_origin_x, double indicator_origin_y);
 
 /* Horizontal origin that centers text on the screen, independent of the
  * indicator's x position. */

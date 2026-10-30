@@ -51,9 +51,9 @@ bool reveal_rect_contains(struct reveal_rect rect, double x, double y) {
 
 bool reveal_hit_test(const struct reveal_layout *layout,
 		double surface_x, double surface_y,
-		double subsurface_offset_x, double subsurface_offset_y) {
-	double x = (surface_x + subsurface_offset_x) * layout->scale;
-	double y = (surface_y + subsurface_offset_y) * layout->scale;
+		double indicator_origin_x, double indicator_origin_y) {
+	double x = (surface_x - indicator_origin_x) * layout->scale;
+	double y = (surface_y - indicator_origin_y) * layout->scale;
 	return reveal_rect_contains(reveal_icon_hit_rect(layout), x, y);
 }
 

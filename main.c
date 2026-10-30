@@ -248,6 +248,15 @@ static void create_surface(struct swaylock_surface *surface) {
 	surface->subsurface = wl_subcompositor_get_subsurface(state->subcompositor, surface->child, surface->surface);
 	assert(surface->subsurface);
 	wl_subsurface_set_sync(surface->subsurface);
+	if (state->args.show_password_toggle) {
+		/* The reveal-mode indicator spans the output width. Give it an empty
+		 * input region so all pointer events land on the lock surface in one
+		 * coordinate space; some compositors stop delivering motion once the
+		 * pointer crosses onto a lock surface's subsurface. */
+		struct wl_region *empty = wl_compositor_create_region(state->compositor);
+		wl_surface_set_input_region(surface->child, empty);
+		wl_region_destroy(empty);
+	}
 
 	reveal_apply(&surface->reveal, REVEAL_EVENT_CLEAR);
 	surface->reveal_hit_valid = false;

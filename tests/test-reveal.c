@@ -168,14 +168,20 @@ static void test_hit_testing_respects_scale_and_offset(void) {
 
 		CHECK(reveal_hit_test(&layout, logical_cx, logical_cy, 0.0, 0.0));
 
-		double offset_x = 100.0;
-		double offset_y = 100.0;
+		/* Pointer on the parent lock surface: its coordinates include the
+		 * indicator subsurface position, which must be subtracted. */
+		double origin_x = 100.0;
+		double origin_y = 480.0;
 		CHECK(reveal_hit_test(&layout,
-			logical_cx - offset_x, logical_cy - offset_y,
-			offset_x, offset_y));
+			logical_cx + origin_x, logical_cy + origin_y,
+			origin_x, origin_y));
 		CHECK(!reveal_hit_test(&layout,
-			logical_cx - offset_x, logical_cy - offset_y,
+			logical_cx + origin_x, logical_cy + origin_y,
 			0.0, 0.0));
+		/* Pointer on the indicator subsurface: coordinates are already
+		 * buffer-local, so the subsurface offset must not be applied. */
+		CHECK(!reveal_hit_test(&layout, logical_cx, logical_cy,
+			origin_x, origin_y));
 	}
 }
 

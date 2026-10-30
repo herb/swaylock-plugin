@@ -273,9 +273,12 @@ static struct swaylock_surface *pointer_hits_reveal_icon(
 	}
 	double x = wl_fixed_to_double(seat->pointer_x);
 	double y = wl_fixed_to_double(seat->pointer_y);
-	double offset_x = on_indicator ? surface->indicator_subsurf_x : 0.0;
-	double offset_y = on_indicator ? surface->indicator_subsurf_y : 0.0;
-	if (!reveal_hit_test(&surface->reveal_hit, x, y, offset_x, offset_y)) {
+	// The hit layout is in indicator-buffer pixels. Pointer coordinates on the
+	// indicator subsurface are already buffer-local; on the parent lock
+	// surface they are offset by the subsurface position.
+	double origin_x = on_indicator ? 0.0 : surface->indicator_subsurf_x;
+	double origin_y = on_indicator ? 0.0 : surface->indicator_subsurf_y;
+	if (!reveal_hit_test(&surface->reveal_hit, x, y, origin_x, origin_y)) {
 		return NULL;
 	}
 	return surface;
