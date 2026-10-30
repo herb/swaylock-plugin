@@ -1,0 +1,25 @@
+# Minimal transport image for the Fedora-built swaylock-plugin binary.
+#
+# The binary is dynamically linked against the host's Fedora system libraries
+# (libc, libcairo, libpam, libwayland, ...) and is not meant to run inside this
+# image. The image exists so the exact binary and its provenance can be pulled
+# and extracted with `podman cp`; consumers install it on a matching Fedora 44
+# host.
+FROM scratch
+
+ARG SOURCE=https://github.com/herb/swaylock-plugin
+ARG REVISION=unknown
+ARG VERSION=unknown
+ARG LICENSES=MIT
+ARG FEDORA_VERSION=44
+
+LABEL org.opencontainers.image.title="swaylock-plugin" \
+	org.opencontainers.image.description="Fedora 44 build of the swaylock-plugin screen locker" \
+	org.opencontainers.image.source="${SOURCE}" \
+	org.opencontainers.image.revision="${REVISION}" \
+	org.opencontainers.image.version="${VERSION}" \
+	org.opencontainers.image.licenses="${LICENSES}" \
+	io.github.herb.fedora-version="${FEDORA_VERSION}"
+
+COPY swaylock-plugin /usr/bin/swaylock-plugin
+COPY LICENSE /LICENSE

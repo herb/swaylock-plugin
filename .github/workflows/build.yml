@@ -1,0 +1,149 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*-herb.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build in Fedora 44 distrobox
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so `git describe --tags` in meson resolves a real
+          # version instead of a bare abbreviated commit hash.
+          fetch-depth: 0
+
+      - name: install podman and distrobox
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            podman uidmap slirp4netns curl ca-certificates
+          # Pin the distrobox installer to an exact commit so CI cannot be
+          # changed by a moving tag.
+          curl -fsSL \
+            https://raw.githubusercontent.com/89luca89/distrobox/40c3cd724faa434aeb0a23e28776665b92de68bd/install \
+            | sh -s -- --prefix "$HOME/.local"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: build and test
+        env:
+          DISTROBOX_NAME: swaylock-plugin-ci
+          DISTROBOX_IMAGE: registry.fedoraproject.org/fedora:44
+        run: ./ci/distrobox-build.sh
+
+      - name: verify version
+        run: |
+          set -euo pipefail
+          build/swaylock-plugin --version
+          build/swaylock-plugin --version | grep -q "1\.8\.7"
+
+      - name: stage image inputs
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp build/swaylock-plugin dist/swaylock-plugin
+          cp LICENSE dist/LICENSE
+
+      - name: upload binary artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: swaylock-plugin
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish OCI image and provenance
+    needs: build
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (startsWith(github.ref, 'refs/tags/v') &&
+       contains(github.ref_name, '-herb.'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/herb/swaylock-plugin
+    steps:
+      - name: checkout (tags for git describe)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: download binary artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: swaylock-plugin
+          path: dist
+
+      - name: determine release tag
+        id: release
+        run: |
+          set -euo pipefail
+          tag="$(git describe --tags --exact-match 2>/dev/null || true)"
+          if [[ -z "${tag}" ]]; then
+            echo "error: publishing requires a tag checkout; dispatch this workflow from a v*-herb.* tag" >&2
+            exit 1
+          fi
+          if [[ ! "${tag}" =~ ^v.+-herb\.[0-9]+$ ]]; then
+            echo "error: tag ${tag} does not match v*-herb.*" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: build image
+        run: |
+          set -euo pipefail
+          podman build \
+            --file ci/Containerfile \
+            --build-arg "SOURCE=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --build-arg "REVISION=${GITHUB_SHA}" \
+            --build-arg "VERSION=${{ steps.release.outputs.tag }}" \
+            --build-arg "LICENSES=MIT" \
+            --build-arg "FEDORA_VERSION=44" \
+            --tag "${IMAGE}:${{ steps.release.outputs.tag }}-fc44-x86_64" \
+            --tag "${IMAGE}:${{ steps.release.outputs.tag }}" \
+            dist
+
+      - name: log in to ghcr.io
+        run: |
+          set -euo pipefail
+          printf '%s' "${GITHUB_TOKEN}" | podman login ghcr.io \
+            --username "${GITHUB_ACTOR}" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: push image
+        id: push
+        run: |
+          set -euo pipefail
+          podman push "${IMAGE}:${{ steps.release.outputs.tag }}-fc44-x86_64"
+          podman push "${IMAGE}:${{ steps.release.outputs.tag }}"
+          digest="$(podman inspect --format '{{.Digest}}' \
+            "${IMAGE}:${{ steps.release.outputs.tag }}")"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: generate build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/herb/swaylock-plugin
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push: true

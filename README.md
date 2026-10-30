@@ -41,6 +41,42 @@ is replaced by your desired program. Examples:
   ```
 
 
+## Herb fork, releases, and prebuilt images
+
+This repository is Herb's fork of `mstoeckl/swaylock-plugin`. All fork work
+lives on the `herb/main` branch, which is based on upstream tag `v1.8.7`
+(commit `117ed3fe`). `main` tracks upstream and is not modified.
+
+Fork releases use tags of the form `v1.8.7-herb.1`. A release is built inside a
+Fedora 44 distrobox by `ci/distrobox-build.sh` (the same recipe runs in GitHub
+Actions and locally), so the resulting dynamically linked binary matches a
+Fedora 44 host's system libraries. The binary is published as a minimal
+`FROM scratch` OCI image at:
+
+```
+ghcr.io/herb/swaylock-plugin:<git tag>            # e.g. v1.8.7-herb.1
+ghcr.io/herb/swaylock-plugin:<git tag>-fc44-x86_64
+```
+
+The image is a transport and provenance artifact, not a runnable container: it
+contains only `/usr/bin/swaylock-plugin` and `/LICENSE`. Consumers pin the image
+by digest (`ghcr.io/herb/swaylock-plugin@sha256:...`), copy the binary out with
+`podman create` + `podman cp`, and install it against the host's PAM and shared
+libraries. Builds use `GITHUB_TOKEN` for `packages: write` and publish
+`actions/attest-build-provenance` attestations (`id-token: write`,
+`attestations: write`). Pull requests only build and test; they never push.
+
+To build locally:
+
+```
+./ci/distrobox-build.sh
+build/swaylock-plugin --version
+```
+
+`DISTROBOX_NAME` and `DISTROBOX_IMAGE` override the default
+`swaylock-plugin-ci` container and `registry.fedoraproject.org/fedora:44`
+image.
+
 ` swaylock-plugin` requires that the Wayland compositor implement the `ext-session-lock-v1` protocol.
 
 This is experimental software, so if something fails to work it's probably a bug
