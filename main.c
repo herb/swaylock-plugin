@@ -2053,6 +2053,11 @@ static void client_destroyed(struct wl_listener *listener, void *data) {
 static bool run_plugin_command(struct swaylock_state *state,
 		struct swaylock_surface *output_surface, const char *context) {
 	int sockpair[2];
+	if (!state->server.display) {
+		swaylock_log(LOG_DEBUG, "Cannot start background plugin without nested display");
+		return false;
+	}
+
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockpair) == -1) {
 		swaylock_log(LOG_ERROR, "Failed to create socket pair for background plugin");
 		return false;
