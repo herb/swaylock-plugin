@@ -217,11 +217,12 @@ Locks your Wayland session.
 	Sets the color of the lines that separate highlight segments.
 
 *--show-password-toggle*
-	Show a small eye icon beneath the unlock indicator. Clicking the icon
-	reveals the current password on that output; clicking it again hides it.
-	The choice is kept until the screen is unlocked, so a revealed password
-	shows again whenever the indicator reappears. Pointer motion also shows the
-	indicator. This option is disabled by default.
+	Show a small eye icon beneath the unlock indicator. The current password
+	starts out revealed on each output; clicking the icon hides it there, and
+	clicking it again reveals it. The choice is kept until the screen is
+	unlocked, so a revealed password shows again whenever the indicator
+	reappears. Pointer motion also shows the indicator. This option is disabled
+	by default.
 
 *--text-color* <rrggbb[aa]>
 	Sets the color of the text.
