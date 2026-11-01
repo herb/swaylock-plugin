@@ -34,6 +34,14 @@ enum reveal_event {
  */
 bool reveal_apply(struct reveal_state *state, enum reveal_event event);
 
+/*
+ * Report whether an eye-icon click should hide the password on every output.
+ *
+ * The first call returns true and marks the session-level flag; every later
+ * call returns false so clicks toggle only the clicked surface.
+ */
+bool reveal_take_global_hide(bool *global_hide_done);
+
 struct reveal_rect {
 	double x, y, width, height;
 };

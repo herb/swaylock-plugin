@@ -258,8 +258,10 @@ static void create_surface(struct swaylock_surface *surface) {
 		wl_region_destroy(empty);
 	}
 
-	/* Start each lock surface with the password revealed; the eye icon hides it. */
-	surface->reveal.revealed = true;
+	/* Start each lock surface with the password revealed; the first eye-icon
+	 * click hides it on every output, so an output hotplugged afterwards
+	 * starts hidden too. */
+	surface->reveal.revealed = !state->reveal_global_hide_done;
 	surface->reveal_hit_valid = false;
 
 	surface->ext_session_lock_surface_v1 = ext_session_lock_v1_get_lock_surface(
@@ -1018,8 +1020,9 @@ static int parse_options(int argc, char **argv, struct swaylock_state *state,
 		"  --separator-color <color>        "
 			"Sets the color of the lines that separate highlight segments.\n"
 		"  --show-password-toggle           "
-			"Show an eye icon; the password starts revealed and clicking "
-			"it hides it.\n"
+			"Show an eye icon; the password starts revealed, and the first "
+			"click hides it on every output. Later clicks toggle only the "
+			"clicked output.\n"
 		"  --text-color <color>             "
 			"Sets the color of the text.\n"
 		"  --text-clear-color <color>       "

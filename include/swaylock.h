@@ -462,6 +462,9 @@ struct swaylock_state {
 	uint32_t highlight_start; // position of highlight; 2048 = 1 full turn
 	int failed_attempts;
 	bool run_display, locked;
+	/* Set by the first eye-icon click, which hides the password on every
+	 * output; later clicks toggle only the clicked output. */
+	bool reveal_global_hide_done;
 	struct ext_session_lock_manager_v1 *ext_session_lock_manager_v1;
 	struct ext_session_lock_v1 *ext_session_lock_v1;
 	struct zxdg_output_manager_v1 *zxdg_output_manager;

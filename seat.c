@@ -351,15 +351,26 @@ static void wl_pointer_button(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, uint32_t time, uint32_t button, uint32_t button_state) {
 	struct swaylock_seat *seat = data;
 
-	/* A click on the eye icon only toggles reveal on that output; it must not
+	/* The first click on the eye icon hides the password on every output;
+	 * later clicks toggle reveal on only the clicked output. Neither must
 	 * unlock through the grace-period path. */
 	struct swaylock_surface *surface = NULL;
 	if (button == BTN_LEFT &&
 			button_state == WL_POINTER_BUTTON_STATE_PRESSED &&
 			(surface = pointer_hits_reveal_icon(seat)) != NULL) {
-		reveal_apply(&surface->reveal, REVEAL_EVENT_TOGGLE);
-		surface->dirty = true;
-		render(surface);
+		if (reveal_take_global_hide(
+				&seat->state->reveal_global_hide_done)) {
+			struct swaylock_surface *other;
+			wl_list_for_each(other, &seat->state->surfaces, link) {
+				other->reveal.revealed = false;
+				other->dirty = true;
+				render(other);
+			}
+		} else {
+			reveal_apply(&surface->reveal, REVEAL_EVENT_TOGGLE);
+			surface->dirty = true;
+			render(surface);
+		}
 		return;
 	}
 

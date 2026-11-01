@@ -19,6 +19,14 @@ bool reveal_apply(struct reveal_state *state, enum reveal_event event) {
 	return state->revealed;
 }
 
+bool reveal_take_global_hide(bool *global_hide_done) {
+	if (*global_hide_done) {
+		return false;
+	}
+	*global_hide_done = true;
+	return true;
+}
+
 struct reveal_rect reveal_icon_rect(const struct reveal_layout *layout) {
 	double gap = layout->radius_px * REVEAL_ICON_GAP_RATIO;
 	double width = layout->radius_px * REVEAL_ICON_WIDTH_RATIO;

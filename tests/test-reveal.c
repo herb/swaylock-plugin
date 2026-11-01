@@ -72,6 +72,15 @@ static void test_toggle_and_reset_events(void) {
 	CHECK(!state.revealed);
 }
 
+static void test_global_hide_only_on_first_click(void) {
+	bool done = false;
+	CHECK(reveal_take_global_hide(&done));
+	CHECK(done);
+	CHECK(!reveal_take_global_hide(&done));
+	CHECK(!reveal_take_global_hide(&done));
+	CHECK(done);
+}
+
 static void test_editing_keeps_state_and_updates_text(void) {
 	static const char *samples[] = {"a", "ab", "abc", "ab"};
 	for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
@@ -187,6 +196,7 @@ static void test_hit_testing_respects_scale_and_offset(void) {
 
 int main(void) {
 	test_toggle_and_reset_events();
+	test_global_hide_only_on_first_click();
 	test_editing_keeps_state_and_updates_text();
 	test_centering_is_independent_of_indicator_position();
 	test_tail_clipping_ascii();
