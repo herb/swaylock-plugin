@@ -145,8 +145,9 @@ static void test_spawn_runs_the_child_hook(void) {
 		.expected_data = &probe,
 	};
 	pid_t pid = -1;
+	int pidfd = -1;
 	int notify_fd = -1;
-	bool spawned = fprint_spawn_child(&pid, &notify_fd, probe_child_hook, &probe);
+	bool spawned = fprint_spawn_child(&pid, &pidfd, &notify_fd, probe_child_hook, &probe);
 	CHECK(spawned);
 
 	/* Only the child should hold the write end now. */
@@ -168,8 +169,8 @@ static void test_spawn_runs_the_child_hook(void) {
 		close(notify_fd);
 	}
 	pid_t reaped = pid;
-	fprint_kill_child(&pid, 0);
-	CHECK(pid == -1);
+	fprint_kill_child(&pidfd, 0);
+	CHECK(pidfd == -1);
 	if (reaped > 0) {
 		int status = 0;
 		CHECK(waitpid(reaped, &status, 0) == reaped);
@@ -179,17 +180,34 @@ static void test_spawn_runs_the_child_hook(void) {
 static void test_spawn_accepts_no_hook(void) {
 	/* The hook is optional: a NULL hook must not crash the child. */
 	pid_t pid = -1;
+	int pidfd = -1;
 	int notify_fd = -1;
-	CHECK(fprint_spawn_child(&pid, &notify_fd, NULL, NULL));
+	CHECK(fprint_spawn_child(&pid, &pidfd, &notify_fd, NULL, NULL));
 	if (notify_fd >= 0) {
 		close(notify_fd);
 	}
 	pid_t reaped = pid;
-	fprint_kill_child(&pid, 0);
+	fprint_kill_child(&pidfd, 0);
 	if (reaped > 0) {
 		int status = 0;
 		CHECK(waitpid(reaped, &status, 0) == reaped);
 	}
+}
+
+/* The sleep barrier must report the child as gone and release its pidfd. */
+static void test_kill_barrier_confirms_exit(void) {
+	pid_t pid = -1;
+	int pidfd = -1;
+	int notify_fd = -1;
+	if (!fprint_spawn_child(&pid, &pidfd, &notify_fd, NULL, NULL)) {
+		return; /* no fingerprint service in the test environment */
+	}
+	CHECK(fprint_child_alive(pidfd));
+	CHECK(fprint_kill_child(&pidfd, 1000));
+	CHECK(pidfd == -1);
+	int status;
+	waitpid(pid, &status, 0);
+	close(notify_fd);
 }
 
 int main(void) {
@@ -197,6 +215,7 @@ int main(void) {
 	test_unavailable_backs_off();
 	test_idle_timeout_retries_promptly();
 	test_never_tight_loop();
+	test_kill_barrier_confirms_exit();
 	test_protocol_bytes_are_fixed_and_distinct();
 	test_spawn_runs_the_child_hook();
 	test_spawn_accepts_no_hook();

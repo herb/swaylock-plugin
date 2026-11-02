@@ -37,18 +37,23 @@ bool fprint_pam_service_available(void);
 typedef void (*fprint_child_hook)(void *data);
 
 /*
- * Fork the fingerprint child. On success stores the child pid and the read end
- * of its notification pipe. `child_hook` (optional) runs in the child before
- * PAM. The caller owns the pid and descriptor and must eventually call
- * fprint_kill_child() and close the descriptor.
+ * Fork the fingerprint child. On success stores its pid (optional, for tests),
+ * a pidfd, and the read end of its notification pipe. `child_hook` (optional)
+ * runs in the child before PAM. The child is signalled and watched only via
+ * the pidfd, so pid reuse after the kernel reaps it is harmless. The caller
+ * must eventually call fprint_kill_child() and close the pipe descriptor.
  */
-bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
+bool fprint_spawn_child(pid_t *pid_out, int *pidfd_out, int *fd_out,
 		fprint_child_hook child_hook, void *child_hook_data);
 
-/* Kill the child (if any) and reset *pid to -1. */
-/* SIGTERM the child and forget its pid. With wait_ms > 0, block for at most
- * wait_ms until it has exited, escalating to SIGKILL halfway through. */
-void fprint_kill_child(pid_t *pid, int wait_ms);
+/* SIGTERM the child. With wait_ms <= 0, close the pidfd and return true at
+ * once. With wait_ms > 0, wait (wall-clock bound, SIGKILL halfway) for it to
+ * exit: returns true and closes the pidfd once it has, or false and keeps the
+ * pidfd if it is still alive at the deadline. */
+bool fprint_kill_child(int *pidfd, int wait_ms);
+
+/* True while the child behind `pidfd` has not exited. */
+bool fprint_child_alive(int pidfd);
 
 /* Entry point for the forked child; never returns. */
 void run_fprint_backend_child(int notify_fd);

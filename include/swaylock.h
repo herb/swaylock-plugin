@@ -477,7 +477,7 @@ struct swaylock_state {
 
 	/* Concurrent fingerprint authentication child (see fprint.c). */
 	bool fprint_enabled; // /etc/pam.d/swaylock-plugin-fprint exists
-	pid_t fprint_pid; // -1 when no child is running
+	int fprint_pidfd; // pidfd of the fingerprint child, -1 when none
 	int fprint_fd; // notification pipe read end, -1 when closed
 
 	// for nested server, output was destroyed

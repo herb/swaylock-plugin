@@ -1506,8 +1506,10 @@ static void stop_fprint_backend_wait(struct swaylock_state *state, int wait_ms) 
 		close(state->fprint_fd);
 		state->fprint_fd = -1;
 	}
-	if (state->fprint_pid > 0) {
-		fprint_kill_child(&state->fprint_pid, wait_ms);
+	if (state->fprint_pidfd >= 0) {
+		/* On a sleep-barrier timeout the pidfd is kept, which blocks a
+		 * respawn until the old child is really gone. */
+		fprint_kill_child(&state->fprint_pidfd, wait_ms);
 	}
 }
 
@@ -1516,18 +1518,28 @@ static void stop_fprint_backend(struct swaylock_state *state) {
 }
 
 static void start_fprint_backend(struct swaylock_state *state) {
-	if (!state->fprint_enabled || state->fprint_pid > 0 ||
-			state->fprint_fd >= 0) {
+	if (!state->fprint_enabled || state->fprint_fd >= 0) {
 		return;
 	}
-	pid_t pid = -1;
+	if (state->fprint_pidfd >= 0) {
+		if (fprint_child_alive(state->fprint_pidfd)) {
+			/* A child which outlived the sleep barrier may still hold the
+			 * fprintd claim; never run two at once. */
+			swaylock_log(LOG_ERROR,
+				"Previous fingerprint child still alive; not respawning");
+			return;
+		}
+		close(state->fprint_pidfd);
+		state->fprint_pidfd = -1;
+	}
+	int pidfd = -1;
 	int fd = -1;
-	if (!fprint_spawn_child(&pid, &fd, scrub_password_for_fprint_child,
+	if (!fprint_spawn_child(NULL, &pidfd, &fd, scrub_password_for_fprint_child,
 			&state->password)) {
 		swaylock_log(LOG_ERROR, "Failed to start fingerprint backend");
 		return;
 	}
-	state->fprint_pid = pid;
+	state->fprint_pidfd = pidfd;
 	state->fprint_fd = fd;
 	loop_add_fd(state->eventloop, fd, POLLIN, fprint_in, state);
 }
@@ -2305,7 +2317,10 @@ static void sleep_in(int fd, short mask, void *data) {
 		cancel_grace_timer(state);
 		/* Never let a stale fprintd claim survive suspend: confirm the child
 		 * has exited (bounded) before acknowledging, so the watcher cannot
-		 * release its delay inhibitor while the child still holds the claim. */
+		 * release its delay inhibitor while the child still holds the claim.
+		 * If it is stuck past the bound we still acknowledge (blocking suspend
+		 * indefinitely is worse) but keep its pidfd so no second child starts
+		 * until it is gone. */
 		stop_fprint_backend_wait(state, FPRINT_SLEEP_KILL_WAIT_MS);
 		char ack = SLEEP_COMM_ACK;
 		if (state->sleep_comm_w >= 0 &&
@@ -2738,7 +2753,7 @@ int main(int argc, char **argv) {
 
 	state.sleep_comm_r = -1;
 	state.sleep_comm_w = -1;
-	state.fprint_pid = -1;
+	state.fprint_pidfd = -1;
 	state.fprint_fd = -1;
 	state.fprint_enabled = fprint_pam_service_available();
 	if (state.fprint_enabled) {

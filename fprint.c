@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE /* syscall() for pidfd_open/pidfd_send_signal */
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -11,6 +12,8 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <poll.h>
+#include <sys/syscall.h>
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
@@ -115,7 +118,28 @@ bool fprint_pam_service_available(void) {
 	return access(FPRINT_PAM_SERVICE_PATH, F_OK) == 0;
 }
 
-bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
+static int pidfd_open_child(pid_t pid) {
+#ifdef SYS_pidfd_open
+	return (int)syscall(SYS_pidfd_open, pid, 0);
+#else
+	(void)pid;
+	errno = ENOSYS;
+	return -1;
+#endif
+}
+
+static int pidfd_signal(int pidfd, int sig) {
+#ifdef SYS_pidfd_send_signal
+	return (int)syscall(SYS_pidfd_send_signal, pidfd, sig, NULL, 0);
+#else
+	(void)pidfd;
+	(void)sig;
+	errno = ENOSYS;
+	return -1;
+#endif
+}
+
+bool fprint_spawn_child(pid_t *pid_out, int *pidfd_out, int *fd_out,
 		fprint_child_hook child_hook, void *child_hook_data) {
 	int fds[2];
 	if (pipe(fds) != 0) {
@@ -150,51 +174,91 @@ bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
 	}
 
 	close(fds[1]);
-	*pid_out = child;
+	/* Signal and watch the child only through a pidfd: SIGCHLD is ignored, so
+	 * the kernel reaps it and a bare pid could be reused by another process. */
+	int pidfd = pidfd_open_child(child);
+	if (pidfd < 0 || !set_cloexec(pidfd)) {
+		swaylock_log_errno(LOG_ERROR, "failed to open fingerprint child pidfd");
+		kill(child, SIGKILL);
+		if (pidfd >= 0) {
+			close(pidfd);
+		}
+		close(fds[0]);
+		return false;
+	}
+	if (pid_out) {
+		*pid_out = child;
+	}
+	*pidfd_out = pidfd;
 	*fd_out = fds[0];
 	return true;
 }
 
-static bool child_gone(pid_t pid) {
-	int status;
-	/* Reap it ourselves if SIGCHLD is not ignored; with SIG_IGN the kernel has
-	 * already reaped it and kill() reports ESRCH. */
-	if (waitpid(pid, &status, WNOHANG) == pid) {
-		return true;
-	}
-	return kill(pid, 0) != 0 && errno == ESRCH;
+static long now_ms(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
 }
 
-void fprint_kill_child(pid_t *pid, int wait_ms) {
-	if (!pid || *pid <= 0) {
-		return;
-	}
-	pid_t child = *pid;
-	*pid = -1;
-	kill(child, SIGTERM);
-	if (wait_ms <= 0) {
-		/* Fire and forget: the parent ignores SIGCHLD, so the kernel reaps
-		 * the child once it exits. Callers which wait for it reap it. */
-		return;
-	}
-	/* Bounded barrier: SIGTERM, then SIGKILL halfway through the budget. A dead
-	 * client's fprintd claim is dropped with its bus connection. */
-	const int step_ms = 10;
-	bool escalated = false;
-	for (int waited = 0; waited < wait_ms; waited += step_ms) {
-		if (child_gone(child)) {
-			return;
+static bool pidfd_exited(int pidfd, int timeout_ms) {
+	struct pollfd pfd = { .fd = pidfd, .events = POLLIN };
+	while (true) {
+		int ret = poll(&pfd, 1, timeout_ms);
+		if (ret > 0) {
+			return true;
 		}
-		if (!escalated && waited >= wait_ms / 2) {
-			kill(child, SIGKILL);
+		if (ret == 0) {
+			return false;
+		}
+		if (errno != EINTR) {
+			return false;
+		}
+	}
+}
+
+bool fprint_child_alive(int pidfd) {
+	return pidfd >= 0 && !pidfd_exited(pidfd, 0);
+}
+
+bool fprint_kill_child(int *pidfd, int wait_ms) {
+	if (!pidfd || *pidfd < 0) {
+		return true;
+	}
+	int fd = *pidfd;
+	pidfd_signal(fd, SIGTERM);
+	if (wait_ms <= 0) {
+		/* Fire and forget: the kernel reaps the child (SIGCHLD is ignored). */
+		close(fd);
+		*pidfd = -1;
+		return true;
+	}
+	/* Bounded wall-clock barrier: SIGTERM, SIGKILL halfway through. A dead
+	 * client's fprintd claim is dropped with its bus connection. */
+	long deadline = now_ms() + wait_ms;
+	long escalate_at = now_ms() + wait_ms / 2;
+	bool escalated = false;
+	while (true) {
+		long now = now_ms();
+		if (now >= deadline) {
+			break;
+		}
+		long until = escalated ? deadline : escalate_at;
+		int slice = (int)(until > now ? until - now : 0);
+		if (pidfd_exited(fd, slice)) {
+			close(fd);
+			*pidfd = -1;
+			return true;
+		}
+		if (!escalated && now_ms() >= escalate_at) {
+			pidfd_signal(fd, SIGKILL);
 			escalated = true;
 		}
-		sleep_ms(step_ms);
 	}
-	if (!child_gone(child)) {
-		swaylock_log(LOG_ERROR,
-			"fingerprint child %d did not exit within %d ms", (int)child, wait_ms);
-	}
+	/* Keep the pidfd: the caller must not start a replacement while this child
+	 * may still hold the fprintd claim. */
+	swaylock_log(LOG_ERROR,
+		"fingerprint child did not exit within %d ms", wait_ms);
+	return false;
 }
 
 void run_fprint_backend_child(int notify_fd) {
@@ -272,20 +336,27 @@ bool fprint_pam_service_available(void) {
 	return false;
 }
 
-bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
+bool fprint_spawn_child(pid_t *pid_out, int *pidfd_out, int *fd_out,
 		fprint_child_hook child_hook, void *child_hook_data) {
 	(void)pid_out;
+	(void)pidfd_out;
 	(void)fd_out;
 	(void)child_hook;
 	(void)child_hook_data;
 	return false;
 }
 
-void fprint_kill_child(pid_t *pid, int wait_ms) {
+bool fprint_child_alive(int pidfd) {
+	(void)pidfd;
+	return false;
+}
+
+bool fprint_kill_child(int *pidfd, int wait_ms) {
 	(void)wait_ms;
-	if (pid) {
-		*pid = -1;
+	if (pidfd) {
+		*pidfd = -1;
 	}
+	return true;
 }
 
 void run_fprint_backend_child(int notify_fd) {
