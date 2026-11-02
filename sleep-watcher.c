@@ -268,15 +268,15 @@ int main(int argc, char **argv) {
 
 	swaylock_log_init(LOG_DEBUG);
 
-	/* argv contract with swaylock-plugin's start_sleep_watcher():
-	 *   argv[1] = ack pipe read end     (parent writes the acknowledgement)
-	 *   argv[2] = notify pipe write end (we write sleep/resume bytes here)
-	 * The order is not arbitrary; swapping it deadlocks the first
-	 * PrepareForSleep. */
+	/* argv contract with swaylock-plugin's start_sleep_watcher(), unchanged
+	 * from upstream's argument order:
+	 *   argv[1] = notify pipe write end (we write sleep/resume bytes here)
+	 *   argv[2] = ack pipe read end     (parent writes the acknowledgement)
+	 * Swapping them makes every notification fail with EBADF. */
 	char *end1 = NULL;
-	int ack_read = strtol(argv[1], &end1, 10);
+	int notify_write = strtol(argv[1], &end1, 10);
 	char *end2 = NULL;
-	int notify_write = strtol(argv[2], &end2, 10);
+	int ack_read = strtol(argv[2], &end2, 10);
 	if (*end1 != 0 || *end2 != 0) {
 		swaylock_log(LOG_ERROR, "Failed to get communication pipes");
 		return EXIT_FAILURE;
