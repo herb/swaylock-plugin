@@ -13,6 +13,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <poll.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #ifdef __linux__
 #include <sys/prctl.h>
@@ -156,8 +157,10 @@ bool fprint_spawn_child(pid_t *pid_out, int *pidfd_out, int *fd_out,
 	/* Start gate: the child blocks on it until the parent holds a pidfd. It
 	 * cannot exit (and be auto-reaped, freeing its pid for reuse) before then,
 	 * so the pidfd is guaranteed to name this child. */
+	/* A socketpair rather than a pipe, so releasing it can use MSG_NOSIGNAL:
+	 * a child that died before the release must not SIGPIPE the locker. */
 	int gate[2];
-	if (pipe(gate) != 0) {
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, gate) != 0) {
 		swaylock_log_errno(LOG_ERROR, "failed to create fingerprint gate");
 		close(fds[0]);
 		close(fds[1]);
@@ -217,7 +220,7 @@ bool fprint_spawn_child(pid_t *pid_out, int *pidfd_out, int *fd_out,
 	char go = 1;
 	ssize_t sent;
 	do {
-		sent = write(gate[1], &go, 1);
+		sent = send(gate[1], &go, 1, MSG_NOSIGNAL);
 	} while (sent < 0 && errno == EINTR);
 	close(gate[1]);
 	if (sent != 1) {
