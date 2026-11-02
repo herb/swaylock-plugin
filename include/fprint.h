@@ -15,6 +15,8 @@
  */
 
 #define FPRINT_PAM_SERVICE "swaylock-plugin-fprint"
+/* Upper bound on blocking the event loop at suspend. */
+#define FPRINT_SLEEP_KILL_WAIT_MS 1000
 #define FPRINT_PAM_SERVICE_PATH "/etc/pam.d/" FPRINT_PAM_SERVICE
 
 enum fprint_message {
@@ -44,7 +46,9 @@ bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
 		fprint_child_hook child_hook, void *child_hook_data);
 
 /* Kill the child (if any) and reset *pid to -1. */
-void fprint_kill_child(pid_t *pid);
+/* SIGTERM the child and forget its pid. With wait_ms > 0, block for at most
+ * wait_ms until it has exited, escalating to SIGKILL halfway through. */
+void fprint_kill_child(pid_t *pid, int wait_ms);
 
 /* Entry point for the forked child; never returns. */
 void run_fprint_backend_child(int notify_fd);

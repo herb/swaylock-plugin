@@ -155,17 +155,46 @@ bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
 	return true;
 }
 
-void fprint_kill_child(pid_t *pid) {
+static bool child_gone(pid_t pid) {
+	int status;
+	/* Reap it ourselves if SIGCHLD is not ignored; with SIG_IGN the kernel has
+	 * already reaped it and kill() reports ESRCH. */
+	if (waitpid(pid, &status, WNOHANG) == pid) {
+		return true;
+	}
+	return kill(pid, 0) != 0 && errno == ESRCH;
+}
+
+void fprint_kill_child(pid_t *pid, int wait_ms) {
 	if (!pid || *pid <= 0) {
 		return;
 	}
-	/* The parent ignores SIGCHLD, so the kernel reaps the child once it exits.
-	 * Also try to reap here for callers which do not ignore SIGCHLD, without
-	 * ever blocking the password path or the exit path. */
-	kill(*pid, SIGTERM);
-	int status;
-	(void)waitpid(*pid, &status, WNOHANG);
+	pid_t child = *pid;
 	*pid = -1;
+	kill(child, SIGTERM);
+	if (wait_ms <= 0) {
+		/* Fire and forget: the parent ignores SIGCHLD, so the kernel reaps
+		 * the child once it exits. Callers which wait for it reap it. */
+		return;
+	}
+	/* Bounded barrier: SIGTERM, then SIGKILL halfway through the budget. A dead
+	 * client's fprintd claim is dropped with its bus connection. */
+	const int step_ms = 10;
+	bool escalated = false;
+	for (int waited = 0; waited < wait_ms; waited += step_ms) {
+		if (child_gone(child)) {
+			return;
+		}
+		if (!escalated && waited >= wait_ms / 2) {
+			kill(child, SIGKILL);
+			escalated = true;
+		}
+		sleep_ms(step_ms);
+	}
+	if (!child_gone(child)) {
+		swaylock_log(LOG_ERROR,
+			"fingerprint child %d did not exit within %d ms", (int)child, wait_ms);
+	}
 }
 
 void run_fprint_backend_child(int notify_fd) {
@@ -252,7 +281,8 @@ bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
 	return false;
 }
 
-void fprint_kill_child(pid_t *pid) {
+void fprint_kill_child(pid_t *pid, int wait_ms) {
+	(void)wait_ms;
 	if (pid) {
 		*pid = -1;
 	}

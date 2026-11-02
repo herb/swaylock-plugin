@@ -168,7 +168,7 @@ static void test_spawn_runs_the_child_hook(void) {
 		close(notify_fd);
 	}
 	pid_t reaped = pid;
-	fprint_kill_child(&pid);
+	fprint_kill_child(&pid, 0);
 	CHECK(pid == -1);
 	if (reaped > 0) {
 		int status = 0;
@@ -185,7 +185,7 @@ static void test_spawn_accepts_no_hook(void) {
 		close(notify_fd);
 	}
 	pid_t reaped = pid;
-	fprint_kill_child(&pid);
+	fprint_kill_child(&pid, 0);
 	if (reaped > 0) {
 		int status = 0;
 		CHECK(waitpid(reaped, &status, 0) == reaped);

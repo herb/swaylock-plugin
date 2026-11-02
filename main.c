@@ -1500,15 +1500,19 @@ static void scrub_password_for_fprint_child(void *data) {
 	clear_password_buffer(data);
 }
 
-static void stop_fprint_backend(struct swaylock_state *state) {
+static void stop_fprint_backend_wait(struct swaylock_state *state, int wait_ms) {
 	if (state->fprint_fd >= 0) {
 		loop_remove_fd(state->eventloop, state->fprint_fd);
 		close(state->fprint_fd);
 		state->fprint_fd = -1;
 	}
 	if (state->fprint_pid > 0) {
-		fprint_kill_child(&state->fprint_pid);
+		fprint_kill_child(&state->fprint_pid, wait_ms);
 	}
+}
+
+static void stop_fprint_backend(struct swaylock_state *state) {
+	stop_fprint_backend_wait(state, 0);
 }
 
 static void start_fprint_backend(struct swaylock_state *state) {
@@ -2299,8 +2303,10 @@ static void sleep_in(int fd, short mask, void *data) {
 	if (n == 1 && msg == SLEEP_COMM_ENTER) {
 		swaylock_log(LOG_DEBUG, "Received sleep notification");
 		cancel_grace_timer(state);
-		/* Never let a stale fprintd claim survive suspend. */
-		stop_fprint_backend(state);
+		/* Never let a stale fprintd claim survive suspend: confirm the child
+		 * has exited (bounded) before acknowledging, so the watcher cannot
+		 * release its delay inhibitor while the child still holds the claim. */
+		stop_fprint_backend_wait(state, FPRINT_SLEEP_KILL_WAIT_MS);
 		char ack = SLEEP_COMM_ACK;
 		if (state->sleep_comm_w >= 0 &&
 				write(state->sleep_comm_w, &ack, 1) != 1) {
