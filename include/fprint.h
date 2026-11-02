@@ -26,11 +26,22 @@ enum fprint_message {
 bool fprint_pam_service_available(void);
 
 /*
+ * Hook that runs in the forked fingerprint child, once, before the child enters
+ * PAM. Since the child inherits the parent's address space it must wipe any
+ * parent state it should never hold; main.c passes its password buffer. The
+ * hook runs between fork() and exec-free PAM code, so it may only touch memory
+ * it was handed — no allocation, no logging setup, no event loop.
+ */
+typedef void (*fprint_child_hook)(void *data);
+
+/*
  * Fork the fingerprint child. On success stores the child pid and the read end
- * of its notification pipe. The caller owns both and must eventually call
+ * of its notification pipe. `child_hook` (optional) runs in the child before
+ * PAM. The caller owns the pid and descriptor and must eventually call
  * fprint_kill_child() and close the descriptor.
  */
-bool fprint_spawn_child(pid_t *pid_out, int *fd_out);
+bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
+		fprint_child_hook child_hook, void *child_hook_data);
 
 /* Kill the child (if any) and reset *pid to -1. */
 void fprint_kill_child(pid_t *pid);

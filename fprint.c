@@ -3,7 +3,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pwd.h>
-#include <security/pam_appl.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -19,9 +18,10 @@
 #include "config.h"
 #include "fprint.h"
 #include "log.h"
-#include "swaylock.h"
 
 #if HAVE_PAM
+
+#include <security/pam_appl.h>
 
 static bool write_byte(int fd, char byte) {
 	while (true) {
@@ -115,7 +115,8 @@ bool fprint_pam_service_available(void) {
 	return access(FPRINT_PAM_SERVICE_PATH, F_OK) == 0;
 }
 
-bool fprint_spawn_child(pid_t *pid_out, int *fd_out) {
+bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
+		fprint_child_hook child_hook, void *child_hook_data) {
 	int fds[2];
 	if (pipe(fds) != 0) {
 		swaylock_log_errno(LOG_ERROR, "failed to create fingerprint pipe");
@@ -136,6 +137,13 @@ bool fprint_spawn_child(pid_t *pid_out, int *fd_out) {
 		return false;
 	} else if (child == 0) {
 		close(fds[0]);
+		/* The child inherits the parent's address space, which may hold a
+		 * partially typed password (this child is respawned after resume).
+		 * Give the caller its one chance to wipe that copy before anything
+		 * else, in particular before PAM runs. */
+		if (child_hook) {
+			child_hook(child_hook_data);
+		}
 		close_inherited_fds(fds[1]);
 		run_fprint_backend_child(fds[1]);
 		_exit(EXIT_FAILURE);
@@ -235,9 +243,12 @@ bool fprint_pam_service_available(void) {
 	return false;
 }
 
-bool fprint_spawn_child(pid_t *pid_out, int *fd_out) {
+bool fprint_spawn_child(pid_t *pid_out, int *fd_out,
+		fprint_child_hook child_hook, void *child_hook_data) {
 	(void)pid_out;
 	(void)fd_out;
+	(void)child_hook;
+	(void)child_hook_data;
 	return false;
 }
 

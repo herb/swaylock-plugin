@@ -175,8 +175,9 @@ test('reveal', reveal_test)
 
 if libpam.found()
 	fprint_test = executable('test-fprint',
-		['tests/test-fprint.c', 'fprint-retry.c'],
+		['tests/test-fprint.c', 'fprint.c', 'fprint-retry.c', 'log.c'],
 		include_directories: [swaylock_inc],
+		dependencies: [libpam],
 	)
 	test('fprint', fprint_test)
 endif

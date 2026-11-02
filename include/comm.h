@@ -15,6 +15,10 @@ bool read_comm_reply(bool *auth_success);
 // FD to poll for password authentication replies.
 int get_comm_reply_fd(void);
 
+/* Set the close-on-exec flag for `fd` (implemented in main.c; also declared in
+ * swaylock.h — repeated here so fprint.c does not need the UI header). */
+bool set_cloexec(int fd);
+
 /* Bytes exchanged with the swaylock-sleep-watcher helper. The helper writes
  * enter/resume bytes to the parent; the parent replies with SLEEP_COMM_ACK
  * once it has prepared for sleep. */

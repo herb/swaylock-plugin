@@ -1490,6 +1490,16 @@ static void comm_in(int fd, short mask, void *data) {
 
 static void fprint_in(int fd, short mask, void *data);
 
+/*
+ * Runs in the forked fingerprint child (see fprint_spawn_child), before PAM.
+ * The child is respawned after resume and inherits the parent's address space,
+ * which may hold a partially typed password; the fingerprint child must never
+ * hold password data, so wipe the inherited copy immediately after fork.
+ */
+static void scrub_password_for_fprint_child(void *data) {
+	clear_password_buffer(data);
+}
+
 static void stop_fprint_backend(struct swaylock_state *state) {
 	if (state->fprint_fd >= 0) {
 		loop_remove_fd(state->eventloop, state->fprint_fd);
@@ -1508,7 +1518,8 @@ static void start_fprint_backend(struct swaylock_state *state) {
 	}
 	pid_t pid = -1;
 	int fd = -1;
-	if (!fprint_spawn_child(&pid, &fd)) {
+	if (!fprint_spawn_child(&pid, &fd, scrub_password_for_fprint_child,
+			&state->password)) {
 		swaylock_log(LOG_ERROR, "Failed to start fingerprint backend");
 		return;
 	}
