@@ -23,9 +23,9 @@ static void test_mismatch_retries_promptly(void) {
 	CHECK(!fprint_status_is_mismatch(PAM_AUTHINFO_UNAVAIL));
 
 	/* The short delay is applied even after a long backoff. */
-	int delay = fprint_retry_delay_ms(120000, PAM_AUTH_ERR);
+	int delay = fprint_retry_delay_ms(120000, PAM_AUTH_ERR, 0);
 	CHECK(delay == 1000);
-	CHECK(fprint_retry_delay_ms(0, PAM_AUTH_ERR) == 1000);
+	CHECK(fprint_retry_delay_ms(0, PAM_AUTH_ERR, 0) == 1000);
 }
 
 static void test_unavailable_backs_off(void) {
@@ -35,17 +35,24 @@ static void test_unavailable_backs_off(void) {
 	CHECK(!fprint_status_is_unavailable(PAM_AUTH_ERR));
 
 	/* First unavailable result jumps straight to the 30s floor. */
-	int delay = fprint_retry_delay_ms(0, PAM_AUTHINFO_UNAVAIL);
+	int delay = fprint_retry_delay_ms(0, PAM_AUTHINFO_UNAVAIL, 0);
 	CHECK(delay == 30000);
-	CHECK(fprint_retry_delay_ms(1000, PAM_AUTHINFO_UNAVAIL) == 30000);
+	CHECK(fprint_retry_delay_ms(1000, PAM_AUTHINFO_UNAVAIL, 0) == 30000);
 
 	/* Then it doubles, capped at 120s. */
-	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL);
+	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL, 0);
 	CHECK(delay == 60000);
-	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL);
+	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL, 0);
 	CHECK(delay == 120000);
-	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL);
+	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL, 0);
 	CHECK(delay == 120000);
+}
+
+static void test_idle_timeout_retries_promptly(void) {
+	/* pam_fprintd reports its idle timeout like a missing device; an attempt
+	 * that ran for a while was a timeout and must not back off. */
+	CHECK(fprint_retry_delay_ms(120000, PAM_AUTHINFO_UNAVAIL, 30000) == 1000);
+	CHECK(fprint_retry_delay_ms(0, PAM_AUTHINFO_UNAVAIL, 4999) == 30000);
 }
 
 static void test_never_tight_loop(void) {
@@ -61,7 +68,7 @@ static void test_never_tight_loop(void) {
 		PAM_PERM_DENIED,
 	};
 	for (size_t i = 0; i < sizeof(statuses) / sizeof(statuses[0]); i++) {
-		CHECK(fprint_retry_delay_ms(0, statuses[i]) >= 1000);
+		CHECK(fprint_retry_delay_ms(0, statuses[i], 0) >= 1000);
 	}
 }
 
@@ -74,6 +81,7 @@ static void test_protocol_bytes_are_fixed_and_distinct(void) {
 int main(void) {
 	test_mismatch_retries_promptly();
 	test_unavailable_backs_off();
+	test_idle_timeout_retries_promptly();
 	test_never_tight_loop();
 	test_protocol_bytes_are_fixed_and_distinct();
 

@@ -47,6 +47,6 @@ bool fprint_status_is_mismatch(int pam_status);
  * unavailable-service statuses back off from 30s up to a 120s cap; a
  * mismatch/no-match retries promptly (1s).
  */
-int fprint_retry_delay_ms(int previous_ms, int pam_status);
+int fprint_retry_delay_ms(int previous_ms, int pam_status, long elapsed_ms);
 
 #endif

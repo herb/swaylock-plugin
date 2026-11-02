@@ -186,6 +186,8 @@ void run_fprint_backend_child(int notify_fd) {
 	int delay_ms = 0;
 	while (true) {
 		pam_handle_t *auth_handle = NULL;
+		struct timespec started, finished;
+		clock_gettime(CLOCK_MONOTONIC, &started);
 		int status = pam_start(FPRINT_PAM_SERVICE, username, &fprint_conv,
 			&auth_handle);
 		if (status == PAM_SUCCESS) {
@@ -219,7 +221,10 @@ void run_fprint_backend_child(int notify_fd) {
 				"fingerprint unavailable (pam status %d)", status);
 		}
 
-		delay_ms = fprint_retry_delay_ms(delay_ms, status);
+		clock_gettime(CLOCK_MONOTONIC, &finished);
+		long elapsed_ms = (long)(finished.tv_sec - started.tv_sec) * 1000L +
+			(finished.tv_nsec - started.tv_nsec) / 1000000L;
+		delay_ms = fprint_retry_delay_ms(delay_ms, status, elapsed_ms);
 		sleep_ms(delay_ms);
 	}
 }

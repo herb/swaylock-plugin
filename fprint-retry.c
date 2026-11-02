@@ -14,6 +14,11 @@
 #define FPRINT_RETRY_PROMPT_MS 1000
 #define FPRINT_RETRY_BACKOFF_MS 30000
 #define FPRINT_RETRY_BACKOFF_MAX_MS 120000
+/* pam_fprintd reports its idle verify timeout with the same status as a
+ * missing device. A missing device fails at once, so an attempt that ran at
+ * least this long was a timeout and must be retried promptly; otherwise a
+ * user walking up to the lock would be ignored for up to the backoff cap. */
+#define FPRINT_TIMEOUT_THRESHOLD_MS 5000
 
 bool fprint_status_is_unavailable(int pam_status) {
 	switch (pam_status) {
@@ -34,8 +39,9 @@ bool fprint_status_is_mismatch(int pam_status) {
 	return pam_status == PAM_AUTH_ERR || pam_status == PAM_MAXTRIES;
 }
 
-int fprint_retry_delay_ms(int previous_ms, int pam_status) {
-	if (!fprint_status_is_unavailable(pam_status)) {
+int fprint_retry_delay_ms(int previous_ms, int pam_status, long elapsed_ms) {
+	if (!fprint_status_is_unavailable(pam_status) ||
+			elapsed_ms >= FPRINT_TIMEOUT_THRESHOLD_MS) {
 		return FPRINT_RETRY_PROMPT_MS;
 	}
 
