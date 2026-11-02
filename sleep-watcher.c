@@ -206,7 +206,7 @@ int run(int notify_fd, int ack_fd) {
 
 	ret = sd_bus_match_signal(state.bus, NULL, DBUS_LOGIND_SERVICE,
 		DBUS_LOGIND_PATH, DBUS_LOGIND_MANAGER_INTERFACE,
-		"PrepareForSleep", prepare_for_sleep, NULL);
+		"PrepareForSleep", prepare_for_sleep, &state);
 	if (ret < 0) {
 		errno = -ret;
 		swaylock_log_errno(LOG_ERROR, "Failed to add D-Bus signal match : sleep");
@@ -268,6 +268,11 @@ int main(int argc, char **argv) {
 
 	swaylock_log_init(LOG_DEBUG);
 
+	/* argv contract with swaylock-plugin's start_sleep_watcher():
+	 *   argv[1] = ack pipe read end     (parent writes the acknowledgement)
+	 *   argv[2] = notify pipe write end (we write sleep/resume bytes here)
+	 * The order is not arbitrary; swapping it deadlocks the first
+	 * PrepareForSleep. */
 	char *end1 = NULL;
 	int ack_read = strtol(argv[1], &end1, 10);
 	char *end2 = NULL;

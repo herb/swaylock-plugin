@@ -2317,6 +2317,14 @@ static void sleep_in(int fd, short mask, void *data) {
 		/* The watcher exited; it can no longer manage suspend. */
 		cancel_grace_timer(state);
 		stop_sleep_watcher(state);
+		if (state->fprint_enabled) {
+			/* The fingerprint child is deliberately left alone: it is
+			 * independent of suspend management, and killing it on a
+			 * watcher crash would silently drop fingerprint unlock. */
+			swaylock_log(LOG_ERROR,
+				"Sleep watcher exited; the fingerprint child keeps running "
+				"but suspend/resume will no longer release its fprintd claim");
+		}
 	}
 }
 
@@ -2338,6 +2346,13 @@ static int start_sleep_watcher(int *sleep_comm_r, int* sleep_comm_w) {
 
 	pid_t pid;
 	char proc_r_str[20], proc_w_str[20];
+	/* Pipe direction, which the helper's argv contract depends on:
+	 *   comm_r = [parent reads, child writes]  -> the helper's notify pipe
+	 *   comm_w = [child reads,  parent writes] -> the helper's ack pipe
+	 * The helper is spawned as `swaylock-sleep-watcher <ack_read> <notify_write>`,
+	 * i.e. argv[1] = comm_w[0] and argv[2] = comm_r[1], matching sleep-watcher's
+	 * `run(notify_fd = argv[2], ack_fd = argv[1])`. Do not swap them: the parent
+	 * reads sleep/resume bytes from comm_r[0] and writes the ack to comm_w[1]. */
 	snprintf(proc_r_str, sizeof(proc_r_str), "%d", comm_w[0]);
 	snprintf(proc_w_str, sizeof(proc_w_str), "%d", comm_r[1]);
 	char *args[] = {"swaylock-sleep-watcher", proc_w_str, proc_r_str, NULL};
