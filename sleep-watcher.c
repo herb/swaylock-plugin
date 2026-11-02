@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "comm.h"
 #include "config.h"
 #include "log.h"
 #if HAVE_SYSTEMD
@@ -28,9 +29,39 @@ struct state {
 	char *session_name;
 	int sleep_lock_fd;
 	struct sd_bus *bus;
-	int comm_r;
-	int comm_w;
+	/* Write end of the pipe to swaylock-plugin (parent reads it). */
+	int notify_fd;
+	/* Read end of the pipe swaylock-plugin writes its acknowledgement to. */
+	int ack_fd;
 };
+
+static bool write_byte(int fd, char byte) {
+	while (true) {
+		ssize_t n = write(fd, &byte, 1);
+		if (n == 1) {
+			return true;
+		}
+		if (n < 0 && errno == EINTR) {
+			continue;
+		}
+		return false;
+	}
+}
+
+static bool read_byte(int fd, char *out) {
+	while (true) {
+		ssize_t n = read(fd, out, 1);
+		if (n == 1) {
+			return true;
+		}
+		if (n == 0) {
+			return false;
+		}
+		if (errno != EINTR) {
+			return false;
+		}
+	}
+}
 
 static void acquire_inhibitor_lock(struct state *state,
 		const char *type, const char *mode) {
@@ -88,26 +119,31 @@ static int prepare_for_sleep(sd_bus_message *msg, void *userdata,
 	swaylock_log(LOG_DEBUG, "PrepareForSleep signal received %d", going_down);
 	if (!going_down) {
 		acquire_inhibitor_lock(state, "sleep", "delay");
-		return 0;
-	} else {
-		assert(state->comm_w != -1);
-		close(state->comm_w);
-		state->comm_w = -1;
-
-		char tmp;
-		int ret = read(state->comm_r, &tmp, 1);
-		if (ret == -1) {
-			/* Error */
+		if (!write_byte(state->notify_fd, SLEEP_COMM_RESUME)) {
 			swaylock_log_errno(LOG_ERROR,
-				"Failed to read from comm pipe");
-		} else if (ret == 0) {
-			/* swaylock-plugin has confirmed receipt of message by closing
-			 * the write end of comm_r */
+				"Failed to send resume notification");
+		}
+		swaylock_log(LOG_DEBUG, "Prepare for sleep done");
+		return 0;
+	}
+
+	/* Tell swaylock-plugin to release the fingerprint claim before the system
+	 * sleeps, then wait for its acknowledgement so that the lock is fully in
+	 * place before the delay inhibitor is released. */
+	if (!write_byte(state->notify_fd, SLEEP_COMM_ENTER)) {
+		swaylock_log_errno(LOG_ERROR,
+			"Failed to send sleep notification");
+	} else {
+		char ack = 0;
+		if (!read_byte(state->ack_fd, &ack)) {
+			swaylock_log_errno(LOG_ERROR,
+				"Failed to read sleep acknowledgement");
+		} else if (ack != SLEEP_COMM_ACK) {
+			swaylock_log(LOG_ERROR,
+				"Unexpected sleep acknowledgement %d", ack);
+		} else {
 			swaylock_log(LOG_DEBUG,
 				"swaylock-plugin acknowledged start of sleep");
-		} else {
-			swaylock_log(LOG_ERROR,
-				"Unexpected data on comm pipe");
 		}
 	}
 	swaylock_log(LOG_DEBUG, "Prepare for sleep done");
@@ -153,11 +189,11 @@ cleanup:
 	sd_bus_message_unref(msg);
 }
 
-int run(int comm_r, int comm_w) {
+int run(int notify_fd, int ack_fd) {
 	struct state state = {0};
 	state.sleep_lock_fd = -1;
-	state.comm_r = comm_r;
-	state.comm_w = comm_w;
+	state.notify_fd = notify_fd;
+	state.ack_fd = ack_fd;
 
 	int ret = sd_bus_default_system(&state.bus);
 	if (ret < 0) {
@@ -179,7 +215,7 @@ int run(int comm_r, int comm_w) {
 	acquire_inhibitor_lock(&state, "sleep", "delay");
 
 	struct pollfd pfds[2];
-	pfds[0].fd = state.comm_r;
+	pfds[0].fd = state.ack_fd;
 	pfds[0].events = POLLIN;
 	pfds[1].fd = sd_bus_get_fd(state.bus);
 	pfds[1].events = POLLIN;
@@ -195,20 +231,14 @@ int run(int comm_r, int comm_w) {
 		}
 		if (pfds[0].revents & (POLLIN | POLLERR | POLLHUP)) {
 			char tmp;
-			int ret = read(state.comm_r, &tmp, 1);
-			if (ret == -1) {
-				/* Error */
-				swaylock_log_errno(LOG_ERROR,
-					"Failed to read from comm pipe");
-			} else if (ret == 0) {
-				/* grace period ended, this program may exit */
+			if (!read_byte(state.ack_fd, &tmp)) {
+				/* swaylock-plugin exited or closed the pipe */
 				swaylock_log(LOG_DEBUG,
-					"swaylock-plugin grace period ended");
-			} else {
-				swaylock_log(LOG_ERROR,
-					"Unexpected data on comm pipe");
+					"swaylock-plugin closed the comm pipe");
+				break;
 			}
-			break;
+			swaylock_log(LOG_DEBUG,
+				"Ignoring unexpected data on comm pipe");
 		}
 
 		if (pfds[1].revents & (POLLIN | POLLERR | POLLHUP)) {
@@ -239,19 +269,19 @@ int main(int argc, char **argv) {
 	swaylock_log_init(LOG_DEBUG);
 
 	char *end1 = NULL;
-	int comm_w = strtol(argv[1], &end1, 10);
+	int ack_read = strtol(argv[1], &end1, 10);
 	char *end2 = NULL;
-	int comm_r = strtol(argv[2], &end2, 10);
+	int notify_write = strtol(argv[2], &end2, 10);
 	if (*end1 != 0 || *end2 != 0) {
 		swaylock_log(LOG_ERROR, "Failed to get communication pipes");
 		return EXIT_FAILURE;
 	}
 
 #if !HAVE_SYSTEMD && !HAVE_ELOGIND
-	(void)comm_r;
-	(void)comm_w;
+	(void)ack_read;
+	(void)notify_write;
 	return EXIT_FAILURE;
 #else
-	return run(comm_r, comm_w);
+	return run(notify_write, ack_read);
 #endif
 }

@@ -2,6 +2,7 @@
 #define _SWAYLOCK_H
 #include <stdbool.h>
 #include <stdint.h>
+#include <sys/types.h>
 #include <wayland-client.h>
 #include <wayland-server-core.h>
 #include "background-image.h"
@@ -473,6 +474,11 @@ struct swaylock_state {
 	bool start_clientless_mode;
 	struct loop_timer *grace_timer; // timer for grace period to end
 	int sleep_comm_r, sleep_comm_w;
+
+	/* Concurrent fingerprint authentication child (see fprint.c). */
+	bool fprint_enabled; // /etc/pam.d/swaylock-plugin-fprint exists
+	pid_t fprint_pid; // -1 when no child is running
+	int fprint_fd; // notification pipe read end, -1 when closed
 
 	// for nested server, output was destroyed
 	struct wl_list stale_wl_output_resources;

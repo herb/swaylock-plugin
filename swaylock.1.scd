@@ -239,6 +239,30 @@ Locks your Wayland session.
 *--text-wrong-color* <rrggbb[aa]>
 	Sets the color of the text when invalid.
 
+# FINGERPRINT UNLOCK
+
+When the file _/etc/pam.d/swaylock-plugin-fprint_ exists, _swaylock-plugin_
+starts a second PAM backend at lock time which repeatedly calls
+_pam_authenticate()_ against that service. It runs concurrently with the
+password backend, so typing a password is never delayed by fingerprint
+authentication, and a recognized finger unlocks the screen without any input.
+
+The fingerprint backend never receives password data. It only reports a fixed
+success or failure byte to the main process, and the main process accepts a
+successful unlock only from that backend's own pipe.
+
+The service file is managed by the system administrator, for example:
+
+```
+auth     required   pam_fprintd.so
+account  include    login
+```
+
+The backend is stopped and reaped on unlock and exit, and is stopped before
+suspend and restarted after resume (through _swaylock-sleep-watcher_) so that a
+stale fprintd claim never survives a suspend. If the service file is absent,
+no fingerprint backend is started.
+
 # SIGNALS
 
 *SIGUSR1*

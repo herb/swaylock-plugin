@@ -15,4 +15,11 @@ bool read_comm_reply(bool *auth_success);
 // FD to poll for password authentication replies.
 int get_comm_reply_fd(void);
 
+/* Bytes exchanged with the swaylock-sleep-watcher helper. The helper writes
+ * enter/resume bytes to the parent; the parent replies with SLEEP_COMM_ACK
+ * once it has prepared for sleep. */
+#define SLEEP_COMM_ENTER 'S'
+#define SLEEP_COMM_RESUME 'R'
+#define SLEEP_COMM_ACK 'A'
+
 #endif

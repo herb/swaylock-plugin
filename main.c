@@ -22,6 +22,7 @@
 #include "background-image.h"
 #include "cairo.h"
 #include "comm.h"
+#include "fprint.h"
 #include "log.h"
 #include "loop.h"
 #include "password-buffer.h"
@@ -1487,6 +1488,70 @@ static void comm_in(int fd, short mask, void *data) {
 	}
 }
 
+static void fprint_in(int fd, short mask, void *data);
+
+static void stop_fprint_backend(struct swaylock_state *state) {
+	if (state->fprint_fd >= 0) {
+		loop_remove_fd(state->eventloop, state->fprint_fd);
+		close(state->fprint_fd);
+		state->fprint_fd = -1;
+	}
+	if (state->fprint_pid > 0) {
+		fprint_kill_child(&state->fprint_pid);
+	}
+}
+
+static void start_fprint_backend(struct swaylock_state *state) {
+	if (!state->fprint_enabled || state->fprint_pid > 0 ||
+			state->fprint_fd >= 0) {
+		return;
+	}
+	pid_t pid = -1;
+	int fd = -1;
+	if (!fprint_spawn_child(&pid, &fd)) {
+		swaylock_log(LOG_ERROR, "Failed to start fingerprint backend");
+		return;
+	}
+	state->fprint_pid = pid;
+	state->fprint_fd = fd;
+	loop_add_fd(state->eventloop, fd, POLLIN, fprint_in, state);
+}
+
+static void fprint_in(int fd, short mask, void *data) {
+	struct swaylock_state *state = data;
+	char msg = 0;
+	ssize_t n = -1;
+	if (mask & POLLIN) {
+		/* Read before handling a hangup: the child may have written its
+		 * success byte and exited in the same poll iteration. */
+		n = read(fd, &msg, 1);
+	}
+
+	if (n == 1) {
+		if (msg == FPRINT_MSG_SUCCESS) {
+			swaylock_log(LOG_DEBUG, "Fingerprint authentication succeeded");
+			stop_fprint_backend(state);
+			state->run_display = false;
+		} else if (msg == FPRINT_MSG_MISMATCH) {
+			swaylock_log(LOG_DEBUG, "Fingerprint not recognized");
+			state->auth_state = AUTH_STATE_INVALID;
+			schedule_auth_idle(state);
+			damage_state(state);
+		} else {
+			swaylock_log(LOG_ERROR,
+				"Unexpected message from fingerprint backend: %d", (int)msg);
+		}
+		return;
+	}
+
+	if (n == 0 || (mask & (POLLHUP | POLLERR)) || n < 0) {
+		/* The optional fingerprint backend is gone; password unlock is
+		 * unaffected, so just stop watching it. */
+		swaylock_log(LOG_DEBUG, "Fingerprint backend exited");
+		stop_fprint_backend(state);
+	}
+}
+
 static void dispatch_nested(int fd, short mask, void *data) {
 	wl_event_loop_dispatch(state.server.loop, 0);
 	if (state.start_clientless_mode) {
@@ -1904,17 +1969,45 @@ static void output_redraw_timeout(void *data) {
 	client_timeout(surface->client ? surface->client : surface->state->server.main_client);
 }
 
+static void cancel_grace_timer(struct swaylock_state *state) {
+	if (!state->grace_timer) {
+		return;
+	}
+	loop_remove_timer(state->eventloop, state->grace_timer);
+	state->grace_timer = NULL;
+}
+
+static void stop_sleep_watcher(struct swaylock_state *state) {
+	if (state->sleep_comm_r >= 0) {
+		loop_remove_fd(state->eventloop, state->sleep_comm_r);
+		close(state->sleep_comm_r);
+		state->sleep_comm_r = -1;
+	}
+	if (state->sleep_comm_w >= 0) {
+		close(state->sleep_comm_w);
+		state->sleep_comm_w = -1;
+	}
+}
+
+static void finish_grace_period(struct swaylock_state *state) {
+	cancel_grace_timer(state);
+	/* The sleep watcher is also used to release and respawn the fingerprint
+	 * child across suspend, so it stays alive when fingerprint unlock is
+	 * enabled. */
+	if (!state->fprint_enabled) {
+		stop_sleep_watcher(state);
+	}
+}
+
 static void grace_timeout(void *data) {
 	struct swaylock_state *state = data;
 	// The event loop frees the timer object; setting grace_timer to null marks
 	// the grace period as over
 	swaylock_log(LOG_DEBUG, "Grace period ended");
 	state->grace_timer = NULL;
-	loop_remove_fd(state->eventloop, state->sleep_comm_r);
-	close(state->sleep_comm_r);
-	close(state->sleep_comm_w);
-	state->sleep_comm_r = -1;
-	state->sleep_comm_w = -1;
+	if (!state->fprint_enabled) {
+		stop_sleep_watcher(state);
+	}
 }
 
 uint32_t posix_spawn_setsid_flag(void);
@@ -2183,30 +2276,37 @@ static void term_in(int fd, short mask, void *data) {
 static void lock_in(int fd, short mask, void *data) {
 	/* On receipt of SIGUSR2, end the grace period */
 	if (state.grace_timer) {
-		/* Timer will automatically be freed later */
 		swaylock_log(LOG_DEBUG, "Received SIGUSR2, ending unlock grace period");
-		loop_remove_timer(state.eventloop, state.grace_timer);
-		state.grace_timer = NULL;
-		loop_remove_fd(state.eventloop, state.sleep_comm_r);
-		close(state.sleep_comm_r);
-		close(state.sleep_comm_w);
-		state.sleep_comm_r = -1;
-		state.sleep_comm_w = -1;
+		finish_grace_period(&state);
 	}
 }
 
 static void sleep_in(int fd, short mask, void *data) {
 	struct swaylock_state *state = data;
-	if (state->grace_timer) {
-		swaylock_log(LOG_DEBUG, "Received sleep notification, ending unlock grace period");
-		loop_remove_timer(state->eventloop, state->grace_timer);
-		state->grace_timer = NULL;
-		close(state->sleep_comm_r);
-		close(state->sleep_comm_w);
-		state->sleep_comm_r = -1;
-		state->sleep_comm_w = -1;
+	char msg = 0;
+	ssize_t n = read(fd, &msg, 1);
+	if (n == 1 && msg == SLEEP_COMM_ENTER) {
+		swaylock_log(LOG_DEBUG, "Received sleep notification");
+		cancel_grace_timer(state);
+		/* Never let a stale fprintd claim survive suspend. */
+		stop_fprint_backend(state);
+		char ack = SLEEP_COMM_ACK;
+		if (state->sleep_comm_w >= 0 &&
+				write(state->sleep_comm_w, &ack, 1) != 1) {
+			swaylock_log_errno(LOG_ERROR,
+				"Failed to acknowledge sleep notification");
+		}
+	} else if (n == 1 && msg == SLEEP_COMM_RESUME) {
+		swaylock_log(LOG_DEBUG, "Received resume notification");
+		start_fprint_backend(state);
+	} else if (n == 1) {
+		swaylock_log(LOG_ERROR,
+			"Unexpected message from sleep watcher: %d", (int)msg);
+	} else {
+		/* The watcher exited; it can no longer manage suspend. */
+		cancel_grace_timer(state);
+		stop_sleep_watcher(state);
 	}
-	loop_remove_fd(state->eventloop, state->sleep_comm_r);
 }
 
 static int start_sleep_watcher(int *sleep_comm_r, int* sleep_comm_w) {
@@ -2607,6 +2707,13 @@ int main(int argc, char **argv) {
 
 	state.sleep_comm_r = -1;
 	state.sleep_comm_w = -1;
+	state.fprint_pid = -1;
+	state.fprint_fd = -1;
+	state.fprint_enabled = fprint_pam_service_available();
+	if (state.fprint_enabled) {
+		swaylock_log(LOG_DEBUG, "Fingerprint unlock enabled (%s)",
+			FPRINT_PAM_SERVICE_PATH);
+	}
 
 	// Create outputs (possibly starting plugin commands for them)
 	struct swaylock_surface *surface;
@@ -2649,13 +2756,21 @@ int main(int argc, char **argv) {
 	if (state.args.daemonize) {
 		daemonize();
 	}
-	if (state.args.grace_time > 0.) {
-		float delay_ms = ceilf(state.args.grace_time * 1000.f);
-		int delay = delay_ms >= (float)INT_MAX ? INT_MAX : (int)delay_ms;
 
-		/* Failure of this process just cancels the grace period */
+	/* Concurrent fingerprint authentication, independent of the password
+	 * backend; the password path never waits for it. */
+	start_fprint_backend(&state);
+
+	if (state.args.grace_time > 0. || state.fprint_enabled) {
+		/* The watcher both bounds the grace period and manages the fingerprint
+		 * child across suspend/resume. Failure just disables those features. */
 		if (start_sleep_watcher(&state.sleep_comm_r, &state.sleep_comm_w) == 0) {
-			state.grace_timer = loop_add_timer(state.eventloop, delay, grace_timeout, &state);
+			if (state.args.grace_time > 0.) {
+				float delay_ms = ceilf(state.args.grace_time * 1000.f);
+				int delay = delay_ms >= (float)INT_MAX ? INT_MAX : (int)delay_ms;
+				state.grace_timer = loop_add_timer(state.eventloop, delay,
+					grace_timeout, &state);
+			}
 			loop_add_fd(state.eventloop, state.sleep_comm_r, POLLIN, sleep_in, &state);
 		}
 	}
@@ -2671,6 +2786,11 @@ int main(int argc, char **argv) {
 
 		loop_poll(state.eventloop);
 	}
+
+	/* Stop the fingerprint child before releasing the lock so that no stale
+	 * fprintd claim survives the unlock. */
+	stop_fprint_backend(&state);
+	stop_sleep_watcher(&state);
 
 	ext_session_lock_v1_unlock_and_destroy(state.ext_session_lock_v1);
 	wl_display_roundtrip(state.display);

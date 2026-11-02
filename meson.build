@@ -114,6 +114,7 @@ conf_data = configuration_data()
 conf_data.set_quoted('SYSCONFDIR', get_option('prefix') / get_option('sysconfdir'))
 conf_data.set_quoted('SWAYLOCK_VERSION', version)
 conf_data.set10('HAVE_GDK_PIXBUF', gdk_pixbuf.found())
+conf_data.set10('HAVE_PAM', libpam.found())
 conf_data.set10('HAVE_SYSTEMD', false)
 conf_data.set10('HAVE_ELOGIND', false)
 if logind.found()
@@ -137,6 +138,7 @@ sources = [
 	'background-image.c',
 	'cairo.c',
 	'comm.c',
+	'fprint.c',
 	'forward-client.c',
 	'forward.c',
 	'log.c',
@@ -153,7 +155,7 @@ sources = [
 ]
 
 if libpam.found()
-	sources += ['pam.c']
+	sources += ['pam.c', 'fprint-retry.c']
 	dependencies += [libpam]
 else
 	warning('The swaylock binary often needs to be setuid when compiled without libpam')
@@ -170,6 +172,14 @@ reveal_test = executable('test-reveal',
 	include_directories: [swaylock_inc],
 )
 test('reveal', reveal_test)
+
+if libpam.found()
+	fprint_test = executable('test-fprint',
+		['tests/test-fprint.c', 'fprint-retry.c'],
+		include_directories: [swaylock_inc],
+	)
+	test('fprint', fprint_test)
+endif
 
 executable('swaylock-plugin',
 	sources + protos_src,

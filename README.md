@@ -129,6 +129,34 @@ locked.) One can also immediately lock the screen with a keybinding (or use the
 keybinding to restart the lock screen, if it crashed.) Any screens will be turned
 off after 10 minutes of inactivity.
 
+## Fingerprint unlock
+
+If `/etc/pam.d/swaylock-plugin-fprint` exists, `swaylock-plugin` starts a
+separate PAM backend that authenticates fingerprints concurrently with the
+password backend. Typing a password is never delayed by fingerprint
+authentication, and a recognized finger unlocks the screen without typing
+anything first. A failed match shows the usual "invalid" indicator and retries
+after a short delay; a missing sensor or no enrolled prints backs off from 30
+seconds up to two minutes instead of polling in a tight loop.
+
+The fingerprint backend never receives password data: it sends only a fixed
+success or failure byte over its own pipe, and the main process only accepts a
+successful unlock from that pipe. The backend is killed and reaped on unlock
+and exit (it also exits if the locker dies), and it is stopped before suspend
+and respawned after resume so that a stale fprintd claim never survives a
+sleep.
+
+The PAM service is not installed by `meson install`; create it yourself, for
+example:
+
+```
+auth     required   pam_fprintd.so
+account  include    login
+```
+
+Without that file (or on machines with no fingerprint reader) no fingerprint
+backend is started and nothing changes.
+
 ## Installation
 
 Install dependencies:
