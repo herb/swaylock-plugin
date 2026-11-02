@@ -1,4 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
+#include "config.h"
+
+#if HAVE_PAM
+
+/* This file is only built with PAM support, but keep the PAM header and the
+ * constants it provides behind the same guard as fprint.c so a
+ * `-Dpam=disabled` tree never needs the PAM development headers. */
 #include <security/pam_appl.h>
 #include "fprint.h"
 
@@ -56,3 +63,5 @@ int fprint_retry_delay_ms(int previous_ms, int pam_status, long elapsed_ms) {
 	}
 	return delay;
 }
+
+#endif /* HAVE_PAM */
