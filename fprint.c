@@ -153,14 +153,28 @@ bool fprint_spawn_child(pid_t *pid_out, int *pidfd_out, int *fd_out,
 		return false;
 	}
 
+	/* Start gate: the child blocks on it until the parent holds a pidfd. It
+	 * cannot exit (and be auto-reaped, freeing its pid for reuse) before then,
+	 * so the pidfd is guaranteed to name this child. */
+	int gate[2];
+	if (pipe(gate) != 0) {
+		swaylock_log_errno(LOG_ERROR, "failed to create fingerprint gate");
+		close(fds[0]);
+		close(fds[1]);
+		return false;
+	}
+
 	pid_t child = fork();
 	if (child < 0) {
 		swaylock_log_errno(LOG_ERROR, "failed to fork fingerprint child");
 		close(fds[0]);
 		close(fds[1]);
+		close(gate[0]);
+		close(gate[1]);
 		return false;
 	} else if (child == 0) {
 		close(fds[0]);
+		close(gate[1]);
 		/* The child inherits the parent's address space, which may hold a
 		 * partially typed password (this child is respawned after resume).
 		 * Give the caller its one chance to wipe that copy before anything
@@ -168,21 +182,48 @@ bool fprint_spawn_child(pid_t *pid_out, int *pidfd_out, int *fd_out,
 		if (child_hook) {
 			child_hook(child_hook_data);
 		}
+		char go = 0;
+		ssize_t got;
+		do {
+			got = read(gate[0], &go, 1);
+		} while (got < 0 && errno == EINTR);
+		if (got != 1) {
+			/* The parent could not get a pidfd and closed the gate. */
+			_exit(EXIT_FAILURE);
+		}
+		close(gate[0]);
 		close_inherited_fds(fds[1]);
 		run_fprint_backend_child(fds[1]);
 		_exit(EXIT_FAILURE);
 	}
 
 	close(fds[1]);
+	close(gate[0]);
 	/* Signal and watch the child only through a pidfd: SIGCHLD is ignored, so
-	 * the kernel reaps it and a bare pid could be reused by another process. */
+	 * the kernel reaps it and a bare pid could be reused by another process.
+	 * The child is still parked on the gate, so this pid is still ours. */
 	int pidfd = pidfd_open_child(child);
 	if (pidfd < 0 || !set_cloexec(pidfd)) {
 		swaylock_log_errno(LOG_ERROR, "failed to open fingerprint child pidfd");
-		kill(child, SIGKILL);
 		if (pidfd >= 0) {
 			close(pidfd);
 		}
+		/* Closing the gate makes the child exit by itself; no numeric-pid
+		 * signal is ever sent. */
+		close(gate[1]);
+		close(fds[0]);
+		return false;
+	}
+	char go = 1;
+	ssize_t sent;
+	do {
+		sent = write(gate[1], &go, 1);
+	} while (sent < 0 && errno == EINTR);
+	close(gate[1]);
+	if (sent != 1) {
+		swaylock_log_errno(LOG_ERROR, "failed to release fingerprint child");
+		pidfd_signal(pidfd, SIGKILL);
+		close(pidfd);
 		close(fds[0]);
 		return false;
 	}
@@ -207,12 +248,9 @@ static bool pidfd_exited(int pidfd, int timeout_ms) {
 		if (ret > 0) {
 			return true;
 		}
-		if (ret == 0) {
-			return false;
-		}
-		if (errno != EINTR) {
-			return false;
-		}
+		/* Timeout, EINTR or error: report "not yet"; the caller recomputes
+		 * its remaining budget, so signals cannot stretch the deadline. */
+		return false;
 	}
 }
 
