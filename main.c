@@ -2308,6 +2308,38 @@ static void lock_in(int fd, short mask, void *data) {
 	}
 }
 
+/*
+ * Write one byte to a pipe whose reader may already be gone (the sleep watcher
+ * can die between ENTER and ACK). Block SIGPIPE for the write and consume a
+ * pending one, so a dead reader yields EPIPE instead of killing the locker.
+ * Ignoring SIGPIPE process-wide is avoided because plugin commands inherit it.
+ */
+static bool write_byte_nosigpipe(int fd, char byte) {
+	sigset_t pipe_set, old_set;
+	sigemptyset(&pipe_set);
+	sigaddset(&pipe_set, SIGPIPE);
+	sigset_t pending;
+	sigemptyset(&pending);
+	sigpending(&pending);
+	bool already_pending = sigismember(&pending, SIGPIPE);
+	if (sigprocmask(SIG_BLOCK, &pipe_set, &old_set) != 0) {
+		return false;
+	}
+	ssize_t n;
+	do {
+		n = write(fd, &byte, 1);
+	} while (n < 0 && errno == EINTR);
+	int saved_errno = errno;
+	if (n < 0 && errno == EPIPE && !already_pending) {
+		struct timespec zero = {0};
+		while (sigtimedwait(&pipe_set, NULL, &zero) < 0 && errno == EINTR) {
+		}
+	}
+	sigprocmask(SIG_SETMASK, &old_set, NULL);
+	errno = saved_errno;
+	return n == 1;
+}
+
 static void sleep_in(int fd, short mask, void *data) {
 	struct swaylock_state *state = data;
 	char msg = 0;
@@ -2324,7 +2356,7 @@ static void sleep_in(int fd, short mask, void *data) {
 		stop_fprint_backend_wait(state, FPRINT_SLEEP_KILL_WAIT_MS);
 		char ack = SLEEP_COMM_ACK;
 		if (state->sleep_comm_w >= 0 &&
-				write(state->sleep_comm_w, &ack, 1) != 1) {
+				!write_byte_nosigpipe(state->sleep_comm_w, ack)) {
 			swaylock_log_errno(LOG_ERROR,
 				"Failed to acknowledge sleep notification");
 		}
