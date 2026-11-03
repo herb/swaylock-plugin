@@ -1,10 +1,11 @@
-# Minimal transport image for the Fedora-built swaylock-plugin binary.
+# Minimal transport image for the Fedora-built swaylock-plugin and
+# swaylock-sleep-watcher binaries.
 #
-# The binary is dynamically linked against the host's Fedora system libraries
-# (libc, libcairo, libpam, libwayland, ...) and is not meant to run inside this
-# image. The image exists so the exact binary and its provenance can be pulled
-# and extracted with `podman cp`; consumers install it on a matching Fedora 44
-# host.
+# The binaries are dynamically linked against the host's Fedora system libraries
+# (libc, libcairo, libpam, libwayland, ...) and are not meant to run inside this
+# image. The image exists so the exact binaries and their provenance can be
+# pulled and extracted with `podman cp`; consumers install them on a matching
+# Fedora 44 host.
 FROM scratch
 
 ARG SOURCE=https://github.com/herb/swaylock-plugin
@@ -23,4 +24,5 @@ LABEL org.opencontainers.image.title="swaylock-plugin" \
 
 # actions/upload-artifact drops file modes, so set them explicitly.
 COPY --chmod=0755 swaylock-plugin /usr/bin/swaylock-plugin
+COPY --chmod=0755 swaylock-sleep-watcher /usr/bin/swaylock-sleep-watcher
 COPY --chmod=0644 LICENSE /LICENSE

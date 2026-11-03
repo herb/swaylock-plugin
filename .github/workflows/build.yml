@@ -61,6 +61,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp build/swaylock-plugin dist/swaylock-plugin
+          cp build/swaylock-sleep-watcher dist/swaylock-sleep-watcher
           cp LICENSE dist/LICENSE
 
       - name: upload binary artifact

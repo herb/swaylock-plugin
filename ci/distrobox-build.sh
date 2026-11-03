@@ -67,6 +67,11 @@ if [[ ! -x "${binary}" ]]; then
 	echo "error: expected build output at ${binary}" >&2
 	exit 1
 fi
+watcher="${repo_root}/${build_dir}/swaylock-sleep-watcher"
+if [[ ! -x "${watcher}" ]]; then
+	echo "error: expected build output at ${watcher}" >&2
+	exit 1
+fi
 
 # The binary links the box's Fedora system libraries, so verify the release
 # identity and linkage inside the same box rather than on the host/runner.

@@ -2046,7 +2046,7 @@ static bool spawn_command(struct swaylock_state *state, int sock_child,
 	char **prog_envp = NULL;
 	bool ret = false;
 
-	if (posix_spawn_file_actions_init(&actions) == -1) {
+	if (posix_spawn_file_actions_init(&actions) != 0) {
 		swaylock_log(LOG_ERROR, "Failed to initialize file actions");
 		return false;
 	}
@@ -2056,7 +2056,7 @@ static bool spawn_command(struct swaylock_state *state, int sock_child,
 		return false;
 	}
 
-	if (posix_spawn_file_actions_addclose(&actions, sock_local) == -1) {
+	if (posix_spawn_file_actions_addclose(&actions, sock_local) != 0) {
 		swaylock_log(LOG_ERROR, "Failed to update file actions");
 		goto end;
 	}
@@ -2121,8 +2121,9 @@ static bool spawn_command(struct swaylock_state *state, int sock_child,
 	// Use posix_spawnp to spawn program. This is rather awkward to do,
 	// but can be significantly more efficient than fork()+exec()
 	pid_t pid;
-	if (posix_spawnp(&pid, "sh", &actions, &attribs, prog_argv, prog_envp) == -1) {
-		swaylock_log(LOG_ERROR, "Failed to forkspawn background plugin: %s", strerror(errno));
+	int rc = posix_spawnp(&pid, "sh", &actions, &attribs, prog_argv, prog_envp);
+	if (rc != 0) {
+		swaylock_log(LOG_ERROR, "Failed to forkspawn background plugin: %s", strerror(rc));
 		goto end;
 	}
 	swaylock_log(LOG_DEBUG, "Forked background plugin (pid = %d; %s): %s", pid, context, state->args.plugin_command);
@@ -2408,12 +2409,13 @@ static int start_sleep_watcher(int *sleep_comm_r, int* sleep_comm_w) {
 	snprintf(proc_r_str, sizeof(proc_r_str), "%d", comm_w[0]);
 	snprintf(proc_w_str, sizeof(proc_w_str), "%d", comm_r[1]);
 	char *args[] = {"swaylock-sleep-watcher", proc_w_str, proc_r_str, NULL};
-	if (posix_spawnp(&pid, "swaylock-sleep-watcher", NULL, NULL, args, environ) == -1) {
+	int rc = posix_spawnp(&pid, "swaylock-sleep-watcher", NULL, NULL, args, environ);
+	if (rc != 0) {
 		close(comm_r[0]);
 		close(comm_r[1]);
 		close(comm_w[0]);
 		close(comm_w[1]);
-		swaylock_log(LOG_ERROR, "Failed to run sleep detection helper");
+		swaylock_log(LOG_ERROR, "Failed to run sleep detection helper: %s", strerror(rc));
 		return -1;
 	}
 	close(comm_r[1]);
