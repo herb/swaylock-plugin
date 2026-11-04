@@ -69,4 +69,19 @@ bool fprint_status_is_mismatch(int pam_status);
  */
 int fprint_retry_delay_ms(int previous_ms, int pam_status, long elapsed_ms);
 
+/*
+ * Resume re-arm policy (pure logic, unit tested). After suspend/resume a child
+ * that exits within FPRINT_REARM_WINDOW_MS of its spawn is treated as wedged
+ * and retried. `attempt` counts retries already scheduled (0 for the first).
+ * Returns the delay in ms before retry `attempt`, or -1 once the
+ * FPRINT_REARM_MAX_RETRIES budget is spent.
+ */
+#define FPRINT_REARM_WINDOW_MS 3000
+#define FPRINT_REARM_MAX_RETRIES 5
+int fprint_rearm_retry_delay_ms(int attempt);
+
+/* True when a child spawned at spawn_ms and gone at exit_ms (both from
+ * CLOCK_MONOTONIC, in ms) lived less than the re-arm window. */
+bool fprint_child_exited_early(long spawn_ms, long exit_ms);
+
 #endif

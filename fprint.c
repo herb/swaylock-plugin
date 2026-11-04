@@ -23,6 +23,23 @@
 #include "fprint.h"
 #include "log.h"
 
+/* Resume re-arm policy. Kept outside the PAM guard so the locker links without
+ * PAM; it has no PAM dependency. */
+static const int rearm_backoff_ms[FPRINT_REARM_MAX_RETRIES] = {
+	1000, 2000, 4000, 8000, 8000,
+};
+
+int fprint_rearm_retry_delay_ms(int attempt) {
+	if (attempt < 0 || attempt >= FPRINT_REARM_MAX_RETRIES) {
+		return -1;
+	}
+	return rearm_backoff_ms[attempt];
+}
+
+bool fprint_child_exited_early(long spawn_ms, long exit_ms) {
+	return exit_ms - spawn_ms < FPRINT_REARM_WINDOW_MS;
+}
+
 #if HAVE_PAM
 
 #include <security/pam_appl.h>

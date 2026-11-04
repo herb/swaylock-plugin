@@ -107,6 +107,27 @@ static void test_never_tight_loop(void) {
 	}
 }
 
+static void test_rearm_backoff_schedule(void) {
+	/* Resume re-arm: 1s, 2s, 4s, 8s, 8s, then the budget is spent. */
+	CHECK(fprint_rearm_retry_delay_ms(0) == 1000);
+	CHECK(fprint_rearm_retry_delay_ms(1) == 2000);
+	CHECK(fprint_rearm_retry_delay_ms(2) == 4000);
+	CHECK(fprint_rearm_retry_delay_ms(3) == 8000);
+	CHECK(fprint_rearm_retry_delay_ms(4) == 8000);
+	CHECK(FPRINT_REARM_MAX_RETRIES == 5);
+	CHECK(fprint_rearm_retry_delay_ms(5) == -1);
+	CHECK(fprint_rearm_retry_delay_ms(100) == -1);
+	CHECK(fprint_rearm_retry_delay_ms(-1) == -1);
+}
+
+static void test_rearm_early_exit_window(void) {
+	/* Exiting within 3s of spawn counts as wedged; 3s or more does not. */
+	CHECK(fprint_child_exited_early(10000, 10000));
+	CHECK(fprint_child_exited_early(10000, 12999));
+	CHECK(!fprint_child_exited_early(10000, 13000));
+	CHECK(!fprint_child_exited_early(10000, 60000));
+}
+
 static void test_protocol_bytes_are_fixed_and_distinct(void) {
 	CHECK(FPRINT_MSG_SUCCESS != FPRINT_MSG_MISMATCH);
 	CHECK(FPRINT_MSG_SUCCESS == 1);
@@ -217,6 +238,8 @@ int main(void) {
 	test_never_tight_loop();
 	test_kill_barrier_confirms_exit();
 	test_protocol_bytes_are_fixed_and_distinct();
+	test_rearm_backoff_schedule();
+	test_rearm_early_exit_window();
 	test_spawn_runs_the_child_hook();
 	test_spawn_accepts_no_hook();
 
