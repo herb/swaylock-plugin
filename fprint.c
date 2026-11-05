@@ -36,10 +36,6 @@ int fprint_rearm_retry_delay_ms(int attempt) {
 	return rearm_backoff_ms[attempt];
 }
 
-bool fprint_child_exited_early(long spawn_ms, long exit_ms) {
-	return exit_ms - spawn_ms < FPRINT_REARM_WINDOW_MS;
-}
-
 #if HAVE_PAM
 
 #include <security/pam_appl.h>

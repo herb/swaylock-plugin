@@ -15,8 +15,6 @@
  */
 
 #define FPRINT_PAM_SERVICE "swaylock-plugin-fprint"
-/* Upper bound on blocking the event loop at suspend. */
-#define FPRINT_SLEEP_KILL_WAIT_MS 1000
 #define FPRINT_PAM_SERVICE_PATH "/etc/pam.d/" FPRINT_PAM_SERVICE
 
 enum fprint_message {
@@ -70,18 +68,19 @@ bool fprint_status_is_mismatch(int pam_status);
 int fprint_retry_delay_ms(int previous_ms, int pam_status, long elapsed_ms);
 
 /*
- * Resume re-arm policy (pure logic, unit tested). After suspend/resume a child
- * that exits within FPRINT_REARM_WINDOW_MS of its spawn is treated as wedged
- * and retried. `attempt` counts retries already scheduled (0 for the first).
- * Returns the delay in ms before retry `attempt`, or -1 once the
- * FPRINT_REARM_MAX_RETRIES budget is spent.
+ * Resume re-arm policy (pure logic, unit tested). fprintd suspends and resumes
+ * the device itself, so the child is left running across suspend. On resume the
+ * locker opens a FPRINT_REARM_WINDOW_MS window. Inside it, a child that has
+ * exited, or exits for any reason other than a successful auth, is respawned.
+ *
+ * The first respawn after resume waits FPRINT_REARM_FIRST_DELAY_MS. Each later
+ * respawn waits the backoff ladder: `attempt` counts retries already scheduled
+ * (0 for the first ladder step). The function returns that delay in ms, or -1
+ * once the FPRINT_REARM_MAX_RETRIES budget is spent.
  */
-#define FPRINT_REARM_WINDOW_MS 3000
+#define FPRINT_REARM_WINDOW_MS 30000
+#define FPRINT_REARM_FIRST_DELAY_MS 1500
 #define FPRINT_REARM_MAX_RETRIES 5
 int fprint_rearm_retry_delay_ms(int attempt);
-
-/* True when a child spawned at spawn_ms and gone at exit_ms (both from
- * CLOCK_MONOTONIC, in ms) lived less than the re-arm window. */
-bool fprint_child_exited_early(long spawn_ms, long exit_ms);
 
 #endif

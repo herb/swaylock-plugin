@@ -142,9 +142,9 @@ seconds up to two minutes instead of polling in a tight loop.
 The fingerprint backend never receives password data: it sends only a fixed
 success or failure byte over its own pipe, and the main process only accepts a
 successful unlock from that pipe. The backend is killed and reaped on unlock
-and exit (it also exits if the locker dies), and it is stopped before suspend
-and respawned after resume so that a stale fprintd claim never survives a
-sleep.
+and exit (it also exits if the locker dies). It is left running across suspend,
+since fprintd manages the device through the sleep: on resume it is respawned if
+it has exited, and again if it exits within 15 seconds of resume.
 
 The PAM service is not installed by `meson install`; create it yourself, for
 example:

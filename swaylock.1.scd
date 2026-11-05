@@ -258,10 +258,11 @@ auth     required   pam_fprintd.so
 account  include    login
 ```
 
-The backend is stopped and reaped on unlock and exit, and is stopped before
-suspend and restarted after resume (through _swaylock-sleep-watcher_) so that a
-stale fprintd claim never survives a suspend. If the service file is absent,
-no fingerprint backend is started.
+The backend is stopped and reaped on unlock and exit. It is left running across
+suspend, because fprintd releases and re-arms the device itself. On resume
+(seen through _swaylock-sleep-watcher_) a backend that has exited is respawned,
+and one that exits within 15 seconds of resume is respawned too. If the service
+file is absent, no fingerprint backend is started.
 
 # SIGNALS
 

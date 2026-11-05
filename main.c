@@ -1500,12 +1500,6 @@ static void scrub_password_for_fprint_child(void *data) {
 	clear_password_buffer(data);
 }
 
-static long monotonic_ms(void) {
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
-}
-
 static void cancel_fprint_retry(struct swaylock_state *state) {
 	if (state->fprint_retry_timer) {
 		loop_remove_timer(state->eventloop, state->fprint_retry_timer);
@@ -1513,7 +1507,21 @@ static void cancel_fprint_retry(struct swaylock_state *state) {
 	}
 }
 
-static void stop_fprint_backend_wait(struct swaylock_state *state, int wait_ms) {
+static void cancel_fprint_window(struct swaylock_state *state) {
+	if (state->fprint_window_timer) {
+		loop_remove_timer(state->eventloop, state->fprint_window_timer);
+		state->fprint_window_timer = NULL;
+	}
+}
+
+/* Ends any resume re-arm: no respawns happen until the next resume. */
+static void end_fprint_rearm(struct swaylock_state *state) {
+	state->fprint_rearm_active = false;
+	cancel_fprint_retry(state);
+	cancel_fprint_window(state);
+}
+
+static void stop_fprint_backend(struct swaylock_state *state) {
 	cancel_fprint_retry(state);
 	if (state->fprint_fd >= 0) {
 		loop_remove_fd(state->eventloop, state->fprint_fd);
@@ -1521,17 +1529,12 @@ static void stop_fprint_backend_wait(struct swaylock_state *state, int wait_ms) 
 		state->fprint_fd = -1;
 	}
 	if (state->fprint_pidfd >= 0) {
-		/* On a sleep-barrier timeout the pidfd is kept, which blocks a
-		 * respawn until the old child is really gone. */
-		fprint_kill_child(&state->fprint_pidfd, wait_ms);
+		fprint_kill_child(&state->fprint_pidfd, 0);
 	}
 }
 
-static void stop_fprint_backend(struct swaylock_state *state) {
-	stop_fprint_backend_wait(state, 0);
-}
-
 static void schedule_fprint_retry(struct swaylock_state *state);
+static void fprint_retry_timeout(void *data);
 
 /* Returns false only when a previous child still blocks the respawn. */
 static bool start_fprint_backend(struct swaylock_state *state) {
@@ -1540,8 +1543,8 @@ static bool start_fprint_backend(struct swaylock_state *state) {
 	}
 	if (state->fprint_pidfd >= 0) {
 		if (fprint_child_alive(state->fprint_pidfd)) {
-			/* A child which outlived the sleep barrier may still hold the
-			 * fprintd claim; never run two at once. */
+			/* A child which survived suspend still holds the fprintd claim;
+			 * never run two at once. */
 			swaylock_log(LOG_ERROR,
 				"Previous fingerprint child still alive; not respawning");
 			return false;
@@ -1558,7 +1561,6 @@ static bool start_fprint_backend(struct swaylock_state *state) {
 	}
 	state->fprint_pidfd = pidfd;
 	state->fprint_fd = fd;
-	state->fprint_spawn_ms = monotonic_ms();
 	loop_add_fd(state->eventloop, fd, POLLIN, fprint_in, state);
 	return true;
 }
@@ -1575,7 +1577,13 @@ static void fprint_retry_timeout(void *data) {
 	}
 }
 
-/* Arm one retry of the resume re-arm, or give up once the budget is spent. */
+static void arm_fprint_retry(struct swaylock_state *state, int delay_ms) {
+	state->fprint_retry_timer = loop_add_timer(state->eventloop, delay_ms,
+		fprint_retry_timeout, state);
+}
+
+/* Arm one ladder retry of the resume re-arm, or give up once the budget is
+ * spent. */
 static void schedule_fprint_retry(struct swaylock_state *state) {
 	if (!state->fprint_rearm_active || state->fprint_retry_timer) {
 		return;
@@ -1585,14 +1593,23 @@ static void schedule_fprint_retry(struct swaylock_state *state) {
 		swaylock_log(LOG_ERROR,
 			"Fingerprint re-arm failed after %d retries; password unlock still works",
 			FPRINT_REARM_MAX_RETRIES);
-		state->fprint_rearm_active = false;
+		end_fprint_rearm(state);
 		return;
 	}
 	state->fprint_retry_attempt++;
 	swaylock_log(LOG_DEBUG, "Fingerprint re-arm retry %d in %d ms",
 		state->fprint_retry_attempt, delay);
-	state->fprint_retry_timer = loop_add_timer(state->eventloop, delay,
-		fprint_retry_timeout, state);
+	arm_fprint_retry(state, delay);
+}
+
+/* The re-arm window closes FPRINT_REARM_WINDOW_MS after resume. Exits after
+ * that are not respawned, and a respawn still pending is dropped. */
+static void fprint_window_timeout(void *data) {
+	struct swaylock_state *state = data;
+	/* The event loop frees the timer; mark it as gone before anything else. */
+	state->fprint_window_timer = NULL;
+	swaylock_log(LOG_DEBUG, "Fingerprint re-arm window closed");
+	end_fprint_rearm(state);
 }
 
 static void fprint_in(int fd, short mask, void *data) {
@@ -1608,7 +1625,7 @@ static void fprint_in(int fd, short mask, void *data) {
 	if (n == 1) {
 		if (msg == FPRINT_MSG_SUCCESS) {
 			swaylock_log(LOG_DEBUG, "Fingerprint authentication succeeded");
-			state->fprint_rearm_active = false;
+			end_fprint_rearm(state);
 			stop_fprint_backend(state);
 			state->run_display = false;
 		} else if (msg == FPRINT_MSG_MISMATCH) {
@@ -1627,14 +1644,12 @@ static void fprint_in(int fd, short mask, void *data) {
 		/* The optional fingerprint backend is gone; password unlock is
 		 * unaffected, so just stop watching it. */
 		swaylock_log(LOG_DEBUG, "Fingerprint backend exited");
-		bool early = state->fprint_rearm_active &&
-			fprint_child_exited_early(state->fprint_spawn_ms, monotonic_ms());
+		/* Inside a resume re-arm window, any exit other than success is
+		 * respawned via the backoff ladder. */
+		bool in_window = state->fprint_rearm_active;
 		stop_fprint_backend(state);
-		if (early) {
+		if (in_window) {
 			schedule_fprint_retry(state);
-		} else {
-			/* Lived past the window (or no re-arm): the re-arm is over. */
-			state->fprint_rearm_active = false;
 		}
 	}
 }
@@ -2401,6 +2416,26 @@ static bool write_byte_nosigpipe(int fd, char byte) {
 	return n == 1;
 }
 
+/* After resume. A child that survived suspend is left running. A dead one is
+ * respawned after the first-respawn delay. Either way the window stays open for
+ * FPRINT_REARM_WINDOW_MS, so an exit inside it is retried. */
+static void rearm_fprint_on_resume(struct swaylock_state *state) {
+	end_fprint_rearm(state);
+	state->fprint_retry_attempt = 0;
+	bool alive = state->fprint_pidfd >= 0 &&
+		fprint_child_alive(state->fprint_pidfd);
+	if (!alive) {
+		/* Drop the dead child's pipe and pidfd so the respawn starts clean. */
+		stop_fprint_backend(state);
+	}
+	state->fprint_rearm_active = true;
+	state->fprint_window_timer = loop_add_timer(state->eventloop,
+		FPRINT_REARM_WINDOW_MS, fprint_window_timeout, state);
+	if (!alive) {
+		arm_fprint_retry(state, FPRINT_REARM_FIRST_DELAY_MS);
+	}
+}
+
 static void sleep_in(int fd, short mask, void *data) {
 	struct swaylock_state *state = data;
 	char msg = 0;
@@ -2408,15 +2443,11 @@ static void sleep_in(int fd, short mask, void *data) {
 	if (n == 1 && msg == SLEEP_COMM_ENTER) {
 		swaylock_log(LOG_DEBUG, "Received sleep notification");
 		cancel_grace_timer(state);
-		state->fprint_rearm_active = false;
-		cancel_fprint_retry(state);
-		/* Never let a stale fprintd claim survive suspend: confirm the child
-		 * has exited (bounded) before acknowledging, so the watcher cannot
-		 * release its delay inhibitor while the child still holds the claim.
-		 * If it is stuck past the bound we still acknowledge (blocking suspend
-		 * indefinitely is worse) but keep its pidfd so no second child starts
-		 * until it is gone. */
-		stop_fprint_backend_wait(state, FPRINT_SLEEP_KILL_WAIT_MS);
+		end_fprint_rearm(state);
+		/* The fingerprint child is left running. fprintd 1.94 handles logind
+		 * PrepareForSleep itself (delay inhibitor, device suspend and resume),
+		 * so killing the child here was an unclean close that left the device
+		 * busy. Acknowledge at once. */
 		char ack = SLEEP_COMM_ACK;
 		if (state->sleep_comm_w >= 0 &&
 				!write_byte_nosigpipe(state->sleep_comm_w, ack)) {
@@ -2427,14 +2458,7 @@ static void sleep_in(int fd, short mask, void *data) {
 		swaylock_log(LOG_DEBUG, "Received resume notification");
 		if (state->fprint_enabled) {
 			swaylock_log(LOG_ERROR, "Resume: re-arming fingerprint unlock");
-			cancel_fprint_retry(state);
-			state->fprint_retry_attempt = 0;
-			state->fprint_rearm_active = true;
-			if (!start_fprint_backend(state)) {
-				schedule_fprint_retry(state);
-			}
-		} else {
-			start_fprint_backend(state);
+			rearm_fprint_on_resume(state);
 		}
 	} else if (n == 1) {
 		swaylock_log(LOG_ERROR,
@@ -2442,8 +2466,7 @@ static void sleep_in(int fd, short mask, void *data) {
 	} else {
 		/* The watcher exited; it can no longer manage suspend. */
 		cancel_grace_timer(state);
-		cancel_fprint_retry(state);
-		state->fprint_rearm_active = false;
+		end_fprint_rearm(state);
 		stop_sleep_watcher(state);
 		if (state->fprint_enabled) {
 			/* The fingerprint child is deliberately left alone: it is
@@ -2864,9 +2887,9 @@ int main(int argc, char **argv) {
 	state.fprint_pidfd = -1;
 	state.fprint_fd = -1;
 	state.fprint_retry_timer = NULL;
+	state.fprint_window_timer = NULL;
 	state.fprint_rearm_active = false;
 	state.fprint_retry_attempt = 0;
-	state.fprint_spawn_ms = 0;
 	state.fprint_enabled = fprint_pam_service_available();
 	if (state.fprint_enabled) {
 		swaylock_log(LOG_DEBUG, "Fingerprint unlock enabled (%s)",
@@ -2947,6 +2970,7 @@ int main(int argc, char **argv) {
 
 	/* Stop the fingerprint child before releasing the lock so that no stale
 	 * fprintd claim survives the unlock. */
+	end_fprint_rearm(&state);
 	stop_fprint_backend(&state);
 	stop_sleep_watcher(&state);
 

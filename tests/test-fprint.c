@@ -120,12 +120,11 @@ static void test_rearm_backoff_schedule(void) {
 	CHECK(fprint_rearm_retry_delay_ms(-1) == -1);
 }
 
-static void test_rearm_early_exit_window(void) {
-	/* Exiting within 3s of spawn counts as wedged; 3s or more does not. */
-	CHECK(fprint_child_exited_early(10000, 10000));
-	CHECK(fprint_child_exited_early(10000, 12999));
-	CHECK(!fprint_child_exited_early(10000, 13000));
-	CHECK(!fprint_child_exited_early(10000, 60000));
+static void test_rearm_window_and_first_delay(void) {
+	/* The window runs from resume, and the first respawn waits 1.5 s. */
+	CHECK(FPRINT_REARM_WINDOW_MS == 30000);
+	CHECK(FPRINT_REARM_FIRST_DELAY_MS == 1500);
+	CHECK(FPRINT_REARM_FIRST_DELAY_MS != fprint_rearm_retry_delay_ms(0));
 }
 
 static void test_protocol_bytes_are_fixed_and_distinct(void) {
@@ -239,7 +238,7 @@ int main(void) {
 	test_kill_barrier_confirms_exit();
 	test_protocol_bytes_are_fixed_and_distinct();
 	test_rearm_backoff_schedule();
-	test_rearm_early_exit_window();
+	test_rearm_window_and_first_delay();
 	test_spawn_runs_the_child_hook();
 	test_spawn_accepts_no_hook();
 

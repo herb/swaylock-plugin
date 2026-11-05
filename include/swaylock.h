@@ -479,10 +479,10 @@ struct swaylock_state {
 	bool fprint_enabled; // /etc/pam.d/swaylock-plugin-fprint exists
 	int fprint_pidfd; // pidfd of the fingerprint child, -1 when none
 	int fprint_fd; // notification pipe read end, -1 when closed
-	long fprint_spawn_ms; // CLOCK_MONOTONIC ms when the current child was spawned
-	bool fprint_rearm_active; // resume re-arm in progress (retries allowed)
-	int fprint_retry_attempt; // retries scheduled in the current re-arm
-	struct loop_timer *fprint_retry_timer; // pending re-arm retry, NULL when none
+	bool fprint_rearm_active; // resume re-arm window open (respawns allowed)
+	int fprint_retry_attempt; // ladder retries scheduled in the current re-arm
+	struct loop_timer *fprint_retry_timer; // pending re-arm respawn, NULL when none
+	struct loop_timer *fprint_window_timer; // closes the re-arm window, NULL when none
 
 	// for nested server, output was destroyed
 	struct wl_list stale_wl_output_resources;
