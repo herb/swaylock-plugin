@@ -2,6 +2,7 @@
 #define _SWAYLOCK_FPRINT_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <sys/types.h>
 
 /*
@@ -82,5 +83,22 @@ int fprint_retry_delay_ms(int previous_ms, int pam_status, long elapsed_ms);
 #define FPRINT_REARM_FIRST_DELAY_MS 1500
 #define FPRINT_REARM_MAX_RETRIES 5
 int fprint_rearm_retry_delay_ms(int attempt);
+
+/*
+ * Sleep-state gating of the fingerprint child (pure logic, unit tested).
+ *
+ * No child is spawned while a suspend is in progress (PrepareForSleep(true)
+ * seen, no resume yet). A locker started while one is under way learns it from
+ * the sleep watcher's startup report, so the first spawn also waits for that
+ * report, for at most FPRINT_SLEEP_STATE_WAIT_MS, after which the locker spawns
+ * anyway and logs it.
+ *
+ * A child spawned within FPRINT_LATE_SPAWN_MS before an ENTER is stopped: the
+ * sleep began while it was still starting, and RESUME respawns it.
+ */
+#define FPRINT_SLEEP_STATE_WAIT_MS 3000
+#define FPRINT_LATE_SPAWN_MS 1000
+bool fprint_spawn_allowed(bool sleeping, bool awaiting_sleep_state);
+bool fprint_spawn_is_too_late(int64_t spawned_ms, int64_t now_ms);
 
 #endif

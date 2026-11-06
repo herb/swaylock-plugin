@@ -25,5 +25,9 @@ bool set_cloexec(int fd);
 #define SLEEP_COMM_ENTER 'S'
 #define SLEEP_COMM_RESUME 'R'
 #define SLEEP_COMM_ACK 'A'
+/* Sent once, at watcher startup, when no suspend is in progress. A suspend
+ * already in progress is reported with SLEEP_COMM_ENTER instead. The locker
+ * holds the fingerprint spawn until one of the two arrives. */
+#define SLEEP_COMM_IDLE 'I'
 
 #endif

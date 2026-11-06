@@ -25,6 +25,7 @@ int main(void) {
 #include <sys/wait.h>
 #include <unistd.h>
 #include <security/pam_appl.h>
+#include "comm.h"
 #include "fprint.h"
 
 static int failures;
@@ -230,7 +231,39 @@ static void test_kill_barrier_confirms_exit(void) {
 	close(notify_fd);
 }
 
+/* A child may not be spawned while a suspend is under way, nor before the
+ * sleep watcher has said whether one is. */
+static void test_sleep_gate_blocks_spawn(void) {
+	CHECK(fprint_spawn_allowed(false, false));
+	CHECK(!fprint_spawn_allowed(true, false));
+	CHECK(!fprint_spawn_allowed(false, true));
+	CHECK(!fprint_spawn_allowed(true, true));
+}
+
+/* Only a child spawned under FPRINT_LATE_SPAWN_MS before ENTER is stopped. */
+static void test_late_spawn_window(void) {
+	CHECK(FPRINT_LATE_SPAWN_MS == 1000);
+	CHECK(FPRINT_SLEEP_STATE_WAIT_MS == 3000);
+	CHECK(fprint_spawn_is_too_late(1000, 1000));
+	CHECK(fprint_spawn_is_too_late(1000, 1999));
+	CHECK(!fprint_spawn_is_too_late(1000, 2000));
+	CHECK(!fprint_spawn_is_too_late(1000, 9000));
+}
+
+/* The startup report must be distinct from the sleep messages it is mixed with. */
+static void test_idle_byte_is_distinct(void) {
+	CHECK(SLEEP_COMM_IDLE != SLEEP_COMM_ENTER);
+	CHECK(SLEEP_COMM_IDLE != SLEEP_COMM_RESUME);
+	CHECK(SLEEP_COMM_IDLE != SLEEP_COMM_ACK);
+	CHECK(SLEEP_COMM_ENTER != SLEEP_COMM_RESUME);
+	CHECK(SLEEP_COMM_ENTER != SLEEP_COMM_ACK);
+	CHECK(SLEEP_COMM_RESUME != SLEEP_COMM_ACK);
+}
+
 int main(void) {
+	test_sleep_gate_blocks_spawn();
+	test_late_spawn_window();
+	test_idle_byte_is_distinct();
 	test_mismatch_retries_promptly();
 	test_unavailable_backs_off();
 	test_idle_timeout_retries_promptly();

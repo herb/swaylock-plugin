@@ -144,7 +144,13 @@ success or failure byte over its own pipe, and the main process only accepts a
 successful unlock from that pipe. The backend is killed and reaped on unlock
 and exit (it also exits if the locker dies). It is left running across suspend,
 since fprintd manages the device through the sleep: on resume it is respawned if
-it has exited, and again if it exits within 15 seconds of resume.
+it has exited, and again if it exits within 30 seconds of resume.
+
+No child is started while a suspend is under way. A locker started during a
+suspend (for example from before-sleep) asks the sleep watcher at startup, and
+the child is started on resume rather than into the suspend. A child that was
+started less than a second before a suspend began is stopped and respawned on
+resume.
 
 The PAM service is not installed by `meson install`; create it yourself, for
 example:

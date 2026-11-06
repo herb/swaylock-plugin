@@ -1536,9 +1536,21 @@ static void stop_fprint_backend(struct swaylock_state *state) {
 static void schedule_fprint_retry(struct swaylock_state *state);
 static void fprint_retry_timeout(void *data);
 
-/* Returns false only when a previous child still blocks the respawn. */
+static int64_t monotonic_ms(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* Returns false only when a previous child still blocks the respawn. A spawn
+ * refused by the sleep gate returns true: RESUME or the sleep watcher's report
+ * starts the child later. */
 static bool start_fprint_backend(struct swaylock_state *state) {
 	if (!state->fprint_enabled || state->fprint_fd >= 0) {
+		return true;
+	}
+	if (!fprint_spawn_allowed(state->fprint_sleeping,
+			state->fprint_awaiting_sleep_state)) {
 		return true;
 	}
 	if (state->fprint_pidfd >= 0) {
@@ -1561,8 +1573,34 @@ static bool start_fprint_backend(struct swaylock_state *state) {
 	}
 	state->fprint_pidfd = pidfd;
 	state->fprint_fd = fd;
+	state->fprint_spawned_ms = monotonic_ms();
 	loop_add_fd(state->eventloop, fd, POLLIN, fprint_in, state);
 	return true;
+}
+
+/* The sleep watcher reported (IDLE, ENTER or RESUME), or exited: stop waiting. */
+static void settle_sleep_state(struct swaylock_state *state) {
+	state->fprint_awaiting_sleep_state = false;
+	if (state->fprint_sleep_state_timer) {
+		loop_remove_timer(state->eventloop, state->fprint_sleep_state_timer);
+		state->fprint_sleep_state_timer = NULL;
+	}
+}
+
+/* No report from the watcher in time: spawn anyway rather than lose
+ * fingerprint unlock. */
+static void fprint_sleep_state_timeout(void *data) {
+	struct swaylock_state *state = data;
+	/* The event loop frees the timer; mark it as gone before anything else. */
+	state->fprint_sleep_state_timer = NULL;
+	if (!state->fprint_awaiting_sleep_state) {
+		return;
+	}
+	swaylock_log(LOG_ERROR,
+		"No sleep state from the sleep watcher within %d ms; starting fingerprint anyway",
+		FPRINT_SLEEP_STATE_WAIT_MS);
+	state->fprint_awaiting_sleep_state = false;
+	start_fprint_backend(state);
 }
 
 static void fprint_retry_timeout(void *data) {
@@ -2444,18 +2482,36 @@ static void sleep_in(int fd, short mask, void *data) {
 		swaylock_log(LOG_DEBUG, "Received sleep notification");
 		cancel_grace_timer(state);
 		end_fprint_rearm(state);
-		/* The fingerprint child is left running. fprintd 1.94 handles logind
+		state->fprint_sleeping = true;
+		settle_sleep_state(state);
+		/* An older child is left running: fprintd 1.94 handles logind
 		 * PrepareForSleep itself (delay inhibitor, device suspend and resume),
-		 * so killing the child here was an unclean close that left the device
-		 * busy. Acknowledge at once. */
+		 * so killing it here was an unclean close that left the device busy.
+		 * A child that started just before the sleep began was started too
+		 * late for this sleep. Stop it cleanly; RESUME respawns it. */
+		if (state->fprint_pidfd >= 0 &&
+				fprint_spawn_is_too_late(state->fprint_spawned_ms, monotonic_ms())) {
+			swaylock_log(LOG_DEBUG,
+				"Fingerprint child started just before sleep; stopping it until resume");
+			stop_fprint_backend(state);
+		}
+		/* Acknowledge at once. */
 		char ack = SLEEP_COMM_ACK;
 		if (state->sleep_comm_w >= 0 &&
 				!write_byte_nosigpipe(state->sleep_comm_w, ack)) {
 			swaylock_log_errno(LOG_ERROR,
 				"Failed to acknowledge sleep notification");
 		}
+	} else if (n == 1 && msg == SLEEP_COMM_IDLE) {
+		swaylock_log(LOG_DEBUG, "Sleep watcher reports no suspend in progress");
+		settle_sleep_state(state);
+		if (state->fprint_enabled) {
+			start_fprint_backend(state);
+		}
 	} else if (n == 1 && msg == SLEEP_COMM_RESUME) {
 		swaylock_log(LOG_DEBUG, "Received resume notification");
+		state->fprint_sleeping = false;
+		settle_sleep_state(state);
 		if (state->fprint_enabled) {
 			swaylock_log(LOG_ERROR, "Resume: re-arming fingerprint unlock");
 			rearm_fprint_on_resume(state);
@@ -2468,6 +2524,12 @@ static void sleep_in(int fd, short mask, void *data) {
 		cancel_grace_timer(state);
 		end_fprint_rearm(state);
 		stop_sleep_watcher(state);
+		settle_sleep_state(state);
+		/* Still no spawn while a suspend is under way: no RESUME can arrive
+		 * from a dead watcher, so that spawn is refused. */
+		if (state->fprint_enabled) {
+			start_fprint_backend(state);
+		}
 		if (state->fprint_enabled) {
 			/* The fingerprint child is deliberately left alone: it is
 			 * independent of suspend management, and killing it on a
@@ -2938,14 +3000,12 @@ int main(int argc, char **argv) {
 		daemonize();
 	}
 
-	/* Concurrent fingerprint authentication, independent of the password
-	 * backend; the password path never waits for it. */
-	start_fprint_backend(&state);
-
+	/* The watcher both bounds the grace period and manages the fingerprint
+	 * child across suspend/resume. Failure just disables those features. */
+	bool watching_sleep = false;
 	if (state.args.grace_time > 0. || state.fprint_enabled) {
-		/* The watcher both bounds the grace period and manages the fingerprint
-		 * child across suspend/resume. Failure just disables those features. */
 		if (start_sleep_watcher(&state.sleep_comm_r, &state.sleep_comm_w) == 0) {
+			watching_sleep = true;
 			if (state.args.grace_time > 0.) {
 				float delay_ms = ceilf(state.args.grace_time * 1000.f);
 				int delay = delay_ms >= (float)INT_MAX ? INT_MAX : (int)delay_ms;
@@ -2953,6 +3013,20 @@ int main(int argc, char **argv) {
 					grace_timeout, &state);
 			}
 			loop_add_fd(state.eventloop, state.sleep_comm_r, POLLIN, sleep_in, &state);
+		}
+	}
+
+	/* Concurrent fingerprint authentication, independent of the password
+	 * backend; the password path never waits for it. With a watcher, the first
+	 * spawn waits for its startup report (sleep_in), so a lock started during
+	 * a suspend does not spawn into it. */
+	if (state.fprint_enabled) {
+		if (watching_sleep) {
+			state.fprint_awaiting_sleep_state = true;
+			state.fprint_sleep_state_timer = loop_add_timer(state.eventloop,
+				FPRINT_SLEEP_STATE_WAIT_MS, fprint_sleep_state_timeout, &state);
+		} else {
+			start_fprint_backend(&state);
 		}
 	}
 
@@ -2971,6 +3045,7 @@ int main(int argc, char **argv) {
 	/* Stop the fingerprint child before releasing the lock so that no stale
 	 * fprintd claim survives the unlock. */
 	end_fprint_rearm(&state);
+	settle_sleep_state(&state);
 	stop_fprint_backend(&state);
 	stop_sleep_watcher(&state);
 

@@ -36,6 +36,14 @@ int fprint_rearm_retry_delay_ms(int attempt) {
 	return rearm_backoff_ms[attempt];
 }
 
+bool fprint_spawn_allowed(bool sleeping, bool awaiting_sleep_state) {
+	return !sleeping && !awaiting_sleep_state;
+}
+
+bool fprint_spawn_is_too_late(int64_t spawned_ms, int64_t now_ms) {
+	return now_ms - spawned_ms < FPRINT_LATE_SPAWN_MS;
+}
+
 #if HAVE_PAM
 
 #include <security/pam_appl.h>

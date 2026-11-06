@@ -105,6 +105,8 @@ static void release_inhibitor_lock(struct state *state) {
 	state->sleep_lock_fd = -1;
 }
 
+static void announce_sleep(struct state *state);
+
 static int prepare_for_sleep(sd_bus_message *msg, void *userdata,
 							 sd_bus_error *ret_error) {
 	struct state *state = userdata;
@@ -127,29 +129,61 @@ static int prepare_for_sleep(sd_bus_message *msg, void *userdata,
 		return 0;
 	}
 
-	/* Tell swaylock-plugin to release the fingerprint claim before the system
-	 * sleeps, then wait for its acknowledgement so that the lock is fully in
-	 * place before the delay inhibitor is released. */
-	if (!write_byte(state->notify_fd, SLEEP_COMM_ENTER)) {
-		swaylock_log_errno(LOG_ERROR,
-			"Failed to send sleep notification");
-	} else {
-		char ack = 0;
-		if (!read_byte(state->ack_fd, &ack)) {
-			swaylock_log_errno(LOG_ERROR,
-				"Failed to read sleep acknowledgement");
-		} else if (ack != SLEEP_COMM_ACK) {
-			swaylock_log(LOG_ERROR,
-				"Unexpected sleep acknowledgement %d", ack);
-		} else {
-			swaylock_log(LOG_DEBUG,
-				"swaylock-plugin acknowledged start of sleep");
-		}
-	}
+	announce_sleep(state);
 	swaylock_log(LOG_DEBUG, "Prepare for sleep done");
 
 	release_inhibitor_lock(state);
 	return 0;
+}
+
+/* Tells swaylock-plugin that a suspend has started, then waits for its
+ * acknowledgement so the locker has processed ENTER before the caller releases
+ * the delay inhibitor. */
+static void announce_sleep(struct state *state) {
+	if (!write_byte(state->notify_fd, SLEEP_COMM_ENTER)) {
+		swaylock_log_errno(LOG_ERROR,
+			"Failed to send sleep notification");
+		return;
+	}
+	char ack = 0;
+	if (!read_byte(state->ack_fd, &ack)) {
+		swaylock_log_errno(LOG_ERROR,
+			"Failed to read sleep acknowledgement");
+	} else if (ack != SLEEP_COMM_ACK) {
+		swaylock_log(LOG_ERROR,
+			"Unexpected sleep acknowledgement %d", ack);
+	} else {
+		swaylock_log(LOG_DEBUG,
+			"swaylock-plugin acknowledged start of sleep");
+	}
+}
+
+/* logind emits PrepareForSleep only once, so a locker started after that point
+ * (for example from before-sleep, or while a suspend is already under way)
+ * would never see it. PreparingForSleep stays true from that emission until
+ * resume, so it tells us whether a suspend is in progress right now. Report
+ * either way, so the locker knows whether it may spawn the fingerprint child. */
+static void report_startup_sleep_state(struct state *state) {
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	int preparing = 0;
+	int ret = sd_bus_get_property_trivial(state->bus, DBUS_LOGIND_SERVICE,
+		DBUS_LOGIND_PATH, DBUS_LOGIND_MANAGER_INTERFACE, "PreparingForSleep",
+		&error, 'b', &preparing);
+	if (ret < 0) {
+		/* Send nothing: the locker's startup timeout then spawns anyway. */
+		swaylock_log(LOG_ERROR,
+			"Failed to read PreparingForSleep: %s", error.message);
+		sd_bus_error_free(&error);
+		return;
+	}
+	sd_bus_error_free(&error);
+	if (preparing) {
+		swaylock_log(LOG_DEBUG, "Sleep already in progress at startup");
+		announce_sleep(state);
+		release_inhibitor_lock(state);
+	} else if (!write_byte(state->notify_fd, SLEEP_COMM_IDLE)) {
+		swaylock_log_errno(LOG_ERROR, "Failed to send startup sleep state");
+	}
 }
 
 static void set_session(struct state *state) {
@@ -213,6 +247,9 @@ int run(int notify_fd, int ack_fd) {
 		return EXIT_FAILURE;
 	}
 	acquire_inhibitor_lock(&state, "sleep", "delay");
+	/* The match is registered above, so a PrepareForSleep arriving from now on
+	 * is queued for the loop below. */
+	report_startup_sleep_state(&state);
 
 	struct pollfd pfds[2];
 	pfds[0].fd = state.ack_fd;
