@@ -45,7 +45,7 @@ jobs:
       - name: build and test
         env:
           DISTROBOX_NAME: swaylock-plugin-ci
-          DISTROBOX_IMAGE: registry.fedoraproject.org/fedora:44
+          DISTROBOX_IMAGE: registry.fedoraproject.org/fedora:45
         # Builds, runs meson tests, and verifies --version/ldd inside the box.
         run: ./ci/distrobox-build.sh
 
@@ -122,8 +122,8 @@ jobs:
             --build-arg "REVISION=${GITHUB_SHA}" \
             --build-arg "VERSION=${{ steps.release.outputs.tag }}" \
             --build-arg "LICENSES=MIT" \
-            --build-arg "FEDORA_VERSION=44" \
-            --tag "${IMAGE}:${{ steps.release.outputs.tag }}-fc44-x86_64" \
+            --build-arg "FEDORA_VERSION=45" \
+            --tag "${IMAGE}:${{ steps.release.outputs.tag }}-fc45-x86_64" \
             --tag "${IMAGE}:${{ steps.release.outputs.tag }}" \
             dist
 
@@ -143,7 +143,7 @@ jobs:
           # push recompresses layers, so take the digest the registry reported
           # and require both tags to resolve to the same manifest.
           podman push --digestfile "${RUNNER_TEMP}/digest-arch" \
-            "${IMAGE}:${{ steps.release.outputs.tag }}-fc44-x86_64"
+            "${IMAGE}:${{ steps.release.outputs.tag }}-fc45-x86_64"
           podman push --digestfile "${RUNNER_TEMP}/digest-plain" \
             "${IMAGE}:${{ steps.release.outputs.tag }}"
           digest="$(cat "${RUNNER_TEMP}/digest-arch")"

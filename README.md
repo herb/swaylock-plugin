@@ -55,7 +55,7 @@ Fedora 44 host's system libraries. The binary is published as a minimal
 
 ```
 ghcr.io/herb/swaylock-plugin:<git tag>            # e.g. v1.8.7-herb.1
-ghcr.io/herb/swaylock-plugin:<git tag>-fc44-x86_64
+ghcr.io/herb/swaylock-plugin:<git tag>-fc45-x86_64
 ```
 
 The image is a transport and provenance artifact, not a runnable container: it
@@ -74,7 +74,7 @@ build/swaylock-plugin --version
 ```
 
 `DISTROBOX_NAME` and `DISTROBOX_IMAGE` override the default
-`swaylock-plugin-ci` container and `registry.fedoraproject.org/fedora:44`
+`swaylock-plugin-ci` container and `registry.fedoraproject.org/fedora:45`
 image.
 
 ` swaylock-plugin` requires that the Wayland compositor implement the `ext-session-lock-v1` protocol.

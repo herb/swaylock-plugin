@@ -12,7 +12,7 @@ ARG SOURCE=https://github.com/herb/swaylock-plugin
 ARG REVISION=unknown
 ARG VERSION=unknown
 ARG LICENSES=MIT
-ARG FEDORA_VERSION=44
+ARG FEDORA_VERSION=45
 
 LABEL org.opencontainers.image.title="swaylock-plugin" \
 	org.opencontainers.image.description="Fedora 44 build of the swaylock-plugin screen locker" \

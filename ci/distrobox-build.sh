@@ -9,7 +9,7 @@
 #
 # Environment:
 #   DISTROBOX_NAME    container name (default: swaylock-plugin-ci)
-#   DISTROBOX_IMAGE   container image (default: registry.fedoraproject.org/fedora:44)
+#   DISTROBOX_IMAGE   container image (default: registry.fedoraproject.org/fedora:45)
 #   MESON_BUILD_DIR   build directory relative to the repository (default: build)
 #
 # The binary is left at "$repo_root/$MESON_BUILD_DIR/swaylock-plugin".
@@ -17,7 +17,7 @@ set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 distrobox_name="${DISTROBOX_NAME:-swaylock-plugin-ci}"
-distrobox_image="${DISTROBOX_IMAGE:-registry.fedoraproject.org/fedora:44}"
+distrobox_image="${DISTROBOX_IMAGE:-registry.fedoraproject.org/fedora:45}"
 build_dir="${MESON_BUILD_DIR:-build}"
 
 if ! command -v distrobox >/dev/null 2>&1; then
