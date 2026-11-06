@@ -48,9 +48,9 @@ lives on the `herb/main` branch, which is based on upstream tag `v1.8.7`
 (commit `117ed3fe`). `main` tracks upstream and is not modified.
 
 Fork releases use tags of the form `v1.8.7-herb.1`. A release is built inside a
-Fedora 44 distrobox by `ci/distrobox-build.sh` (the same recipe runs in GitHub
+Fedora 45 distrobox by `ci/distrobox-build.sh` (the same recipe runs in GitHub
 Actions and locally), so the resulting dynamically linked binary matches a
-Fedora 44 host's system libraries. The binary is published as a minimal
+Fedora 45 host's system libraries. The binary is published as a minimal
 `FROM scratch` OCI image at:
 
 ```

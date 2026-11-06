@@ -5,7 +5,7 @@
 # (libc, libcairo, libpam, libwayland, ...) and are not meant to run inside this
 # image. The image exists so the exact binaries and their provenance can be
 # pulled and extracted with `podman cp`; consumers install them on a matching
-# Fedora 44 host.
+# Fedora 45 host.
 FROM scratch
 
 ARG SOURCE=https://github.com/herb/swaylock-plugin
@@ -15,7 +15,7 @@ ARG LICENSES=MIT
 ARG FEDORA_VERSION=45
 
 LABEL org.opencontainers.image.title="swaylock-plugin" \
-	org.opencontainers.image.description="Fedora 44 build of the swaylock-plugin screen locker" \
+	org.opencontainers.image.description="Fedora 45 build of the swaylock-plugin screen locker" \
 	org.opencontainers.image.source="${SOURCE}" \
 	org.opencontainers.image.revision="${REVISION}" \
 	org.opencontainers.image.version="${VERSION}" \

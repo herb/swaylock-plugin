@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    name: build in Fedora 44 distrobox
+    name: build in Fedora 45 distrobox
     runs-on: ubuntu-latest
     steps:
       - name: checkout
@@ -49,11 +49,11 @@ jobs:
         # Builds, runs meson tests, and verifies --version/ldd inside the box.
         run: ./ci/distrobox-build.sh
 
-      - name: assert build distrobox is Fedora 44
+      - name: assert build distrobox is Fedora 45
         run: |
           set -euo pipefail
           distrobox enter --no-tty swaylock-plugin-ci -- cat /etc/os-release \
-            | grep -qx 'VERSION_ID=44'
+            | grep -qx 'VERSION_ID=45'
 
 
       - name: stage image inputs
