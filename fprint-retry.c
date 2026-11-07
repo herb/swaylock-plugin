@@ -19,7 +19,11 @@
  */
 
 #define FPRINT_RETRY_PROMPT_MS 1000
-#define FPRINT_RETRY_BACKOFF_MS 30000
+/* An unavailable reader backs off from 1s, doubling up to the cap. Starting
+ * low matters after resume: fprintd briefly reports the reader unavailable
+ * while it resumes the device, and a large first step left fingerprint
+ * unlock dead for the seconds the user actually tries it. */
+#define FPRINT_RETRY_BACKOFF_MS 1000
 #define FPRINT_RETRY_BACKOFF_MAX_MS 120000
 /* pam_fprintd reports its idle verify timeout with the same status as a
  * missing device. A missing device fails at once, so an attempt that ran at

@@ -136,15 +136,16 @@ separate PAM backend that authenticates fingerprints concurrently with the
 password backend. Typing a password is never delayed by fingerprint
 authentication, and a recognized finger unlocks the screen without typing
 anything first. A failed match shows the usual "invalid" indicator and retries
-after a short delay; a missing sensor or no enrolled prints backs off from 30
-seconds up to two minutes instead of polling in a tight loop.
+after a short delay; a missing sensor or no enrolled prints backs off from one
+second, doubling up to two minutes, instead of polling in a tight loop.
 
 The fingerprint backend never receives password data: it sends only a fixed
 success or failure byte over its own pipe, and the main process only accepts a
 successful unlock from that pipe. The backend is killed and reaped on unlock
 and exit (it also exits if the locker dies). It is left running across suspend,
-since fprintd manages the device through the sleep: on resume it is respawned if
-it has exited, and again if it exits within 30 seconds of resume.
+since fprintd manages the device through the sleep. On resume it is replaced
+by a fresh backend, which drops the claim the aborted verify left busy, and a
+backend that exits within 30 seconds of resume is respawned too.
 
 No child is started while a suspend is under way. A locker started during a
 suspend (for example from before-sleep) asks the sleep watcher at startup, and

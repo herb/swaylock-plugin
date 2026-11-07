@@ -70,25 +70,38 @@ static void test_unavailable_backs_off(void) {
 	CHECK(fprint_status_is_unavailable(PAM_SYSTEM_ERR));
 	CHECK(!fprint_status_is_unavailable(PAM_AUTH_ERR));
 
-	/* First unavailable result jumps straight to the 30s floor. */
+	/* First unavailable result retries after 1s, so a reader fprintd is still
+	 * resuming after suspend is picked up within seconds. */
 	int delay = fprint_retry_delay_ms(0, PAM_AUTHINFO_UNAVAIL, 0);
-	CHECK(delay == 30000);
-	CHECK(fprint_retry_delay_ms(1000, PAM_AUTHINFO_UNAVAIL, 0) == 30000);
+	CHECK(delay == 1000);
 
 	/* Then it doubles, capped at 120s. */
-	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL, 0);
-	CHECK(delay == 60000);
-	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL, 0);
-	CHECK(delay == 120000);
-	delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL, 0);
-	CHECK(delay == 120000);
+	const int ladder[] = {2000, 4000, 8000, 16000, 32000, 64000, 120000, 120000};
+	for (size_t i = 0; i < sizeof(ladder) / sizeof(ladder[0]); i++) {
+		delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL, 0);
+		CHECK(delay == ladder[i]);
+	}
+
+	/* At least four attempts fall inside the first 15s. */
+	int elapsed = 0, attempts = 0;
+	delay = 0;
+	while (true) {
+		delay = fprint_retry_delay_ms(delay, PAM_AUTHINFO_UNAVAIL, 0);
+		if (elapsed + delay > 15000) {
+			break;
+		}
+		elapsed += delay;
+		attempts++;
+	}
+	CHECK(attempts >= 4);
 }
 
 static void test_idle_timeout_retries_promptly(void) {
 	/* pam_fprintd reports its idle timeout like a missing device; an attempt
 	 * that ran for a while was a timeout and must not back off. */
 	CHECK(fprint_retry_delay_ms(120000, PAM_AUTHINFO_UNAVAIL, 30000) == 1000);
-	CHECK(fprint_retry_delay_ms(0, PAM_AUTHINFO_UNAVAIL, 4999) == 30000);
+	CHECK(fprint_retry_delay_ms(0, PAM_AUTHINFO_UNAVAIL, 4999) == 1000);
+	CHECK(fprint_retry_delay_ms(1000, PAM_AUTHINFO_UNAVAIL, 4999) == 2000);
 }
 
 static void test_never_tight_loop(void) {

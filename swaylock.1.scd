@@ -260,7 +260,7 @@ account  include    login
 
 The backend is stopped and reaped on unlock and exit. It is left running across
 suspend, because fprintd releases and re-arms the device itself. On resume
-(seen through _swaylock-sleep-watcher_) a backend that has exited is respawned,
+(seen through _swaylock-sleep-watcher_) the backend is replaced by a fresh one,
 and one that exits within 30 seconds of resume is respawned too. No backend is
 started while a suspend is under way: a locker started during a suspend starts
 its backend on resume. A backend started less than a second before a suspend
