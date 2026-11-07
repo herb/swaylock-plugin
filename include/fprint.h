@@ -85,6 +85,13 @@ int fprint_retry_delay_ms(int previous_ms, int pam_status, long elapsed_ms);
 int fprint_rearm_retry_delay_ms(int attempt);
 
 /*
+ * Whether a fingerprint child that survived suspend is kept on resume. It is
+ * not: such a child holds a stale fprintd claim, so resume always replaces it
+ * (see rearm_fprint_on_resume in main.c). Pure logic, unit tested.
+ */
+bool fprint_resume_keeps_child(void);
+
+/*
  * Sleep-state gating of the fingerprint child (pure logic, unit tested).
  *
  * No child is spawned while a suspend is in progress (PrepareForSleep(true)

@@ -2457,21 +2457,33 @@ static bool write_byte_nosigpipe(int fd, char byte) {
 /* After resume. A child that survived suspend is left running. A dead one is
  * respawned after the first-respawn delay. Either way the window stays open for
  * FPRINT_REARM_WINDOW_MS, so an exit inside it is retried. */
+/* Bounded wait for a child replaced on resume to exit before its successor
+ * starts, so the successor does not find the fprintd claim still busy. */
+#define FPRINT_RESUME_KILL_WAIT_MS 1000
+
 static void rearm_fprint_on_resume(struct swaylock_state *state) {
 	end_fprint_rearm(state);
 	state->fprint_retry_attempt = 0;
-	bool alive = state->fprint_pidfd >= 0 &&
-		fprint_child_alive(state->fprint_pidfd);
-	if (!alive) {
-		/* Drop the dead child's pipe and pidfd so the respawn starts clean. */
+	/* A child that survived suspend holds a stale fprintd claim. fprintd
+	 * aborts its verify on suspend ("Cannot run while suspended") but leaves
+	 * the claim busy, so the child can neither succeed nor release the reader
+	 * ("ReleaseDevice failed: still busy"). By resume the verify is already
+	 * aborted, so terminating the child only drops that stale client: its bus
+	 * connection closes and fprintd releases the claim. The first respawn below
+	 * then claims the reader cleanly. A child that already exited is simply
+	 * cleaned up here. */
+	if (!fprint_resume_keeps_child()) {
+		if (state->fprint_pidfd >= 0) {
+			fprint_kill_child(&state->fprint_pidfd, FPRINT_RESUME_KILL_WAIT_MS);
+		}
+		/* Drop the pipe and any pidfd left behind, so the respawn starts clean.
+		 * This also cancels any pending retry, so it must run before arming. */
 		stop_fprint_backend(state);
 	}
 	state->fprint_rearm_active = true;
 	state->fprint_window_timer = loop_add_timer(state->eventloop,
 		FPRINT_REARM_WINDOW_MS, fprint_window_timeout, state);
-	if (!alive) {
-		arm_fprint_retry(state, FPRINT_REARM_FIRST_DELAY_MS);
-	}
+	arm_fprint_retry(state, FPRINT_REARM_FIRST_DELAY_MS);
 }
 
 static void sleep_in(int fd, short mask, void *data) {

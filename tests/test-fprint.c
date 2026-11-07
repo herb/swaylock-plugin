@@ -128,6 +128,13 @@ static void test_rearm_window_and_first_delay(void) {
 	CHECK(FPRINT_REARM_FIRST_DELAY_MS != fprint_rearm_retry_delay_ms(0));
 }
 
+/* A child that survived suspend holds a stale fprintd claim, so resume must
+ * never keep it: the re-arm replaces it with a fresh child. */
+static void test_resume_replaces_surviving_child(void) {
+	CHECK(!fprint_resume_keeps_child());
+	CHECK(FPRINT_REARM_FIRST_DELAY_MS > 0);
+}
+
 static void test_protocol_bytes_are_fixed_and_distinct(void) {
 	CHECK(FPRINT_MSG_SUCCESS != FPRINT_MSG_MISMATCH);
 	CHECK(FPRINT_MSG_SUCCESS == 1);
@@ -272,6 +279,7 @@ int main(void) {
 	test_protocol_bytes_are_fixed_and_distinct();
 	test_rearm_backoff_schedule();
 	test_rearm_window_and_first_delay();
+	test_resume_replaces_surviving_child();
 	test_spawn_runs_the_child_hook();
 	test_spawn_accepts_no_hook();
 

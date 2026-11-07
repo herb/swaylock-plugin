@@ -36,6 +36,10 @@ int fprint_rearm_retry_delay_ms(int attempt) {
 	return rearm_backoff_ms[attempt];
 }
 
+bool fprint_resume_keeps_child(void) {
+	return false;
+}
+
 bool fprint_spawn_allowed(bool sleeping, bool awaiting_sleep_state) {
 	return !sleeping && !awaiting_sleep_state;
 }
@@ -347,6 +351,9 @@ void run_fprint_backend_child(int notify_fd) {
 		username);
 
 	int delay_ms = 0;
+	/* True once the first unavailable status of the current run of failures
+	 * has been logged at LOG_ERROR. A mismatch or success ends the run. */
+	bool logged_unavailable = false;
 	while (true) {
 		pam_handle_t *auth_handle = NULL;
 		struct timespec started, finished;
@@ -370,6 +377,7 @@ void run_fprint_backend_child(int notify_fd) {
 		}
 
 		if (fprint_status_is_mismatch(status)) {
+			logged_unavailable = false;
 			swaylock_log(LOG_DEBUG,
 				"fingerprint not recognized (pam status %d)", status);
 			if (!write_byte(notify_fd, FPRINT_MSG_MISMATCH)) {
@@ -379,9 +387,17 @@ void run_fprint_backend_child(int notify_fd) {
 			}
 		} else {
 			/* No device, no enrolled prints, or a transient service error:
-			 * back off quietly instead of flickering the invalid indicator. */
-			swaylock_log(LOG_DEBUG,
-				"fingerprint unavailable (pam status %d)", status);
+			 * back off quietly instead of flickering the invalid indicator.
+			 * Log the first status of a run so the journal shows it; repeats
+			 * of the same run stay at debug level. */
+			if (!logged_unavailable) {
+				swaylock_log(LOG_ERROR,
+					"fingerprint unavailable (pam status %d)", status);
+				logged_unavailable = true;
+			} else {
+				swaylock_log(LOG_DEBUG,
+					"fingerprint unavailable (pam status %d)", status);
+			}
 		}
 
 		clock_gettime(CLOCK_MONOTONIC, &finished);
