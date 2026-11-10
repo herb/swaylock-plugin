@@ -21,6 +21,7 @@
 enum fprint_message {
 	FPRINT_MSG_SUCCESS = 1,
 	FPRINT_MSG_MISMATCH = 2,
+	FPRINT_MSG_UNAVAILABLE = 3,
 };
 
 /* True when the fingerprint PAM service is installed on this system. */
@@ -105,7 +106,8 @@ bool fprint_resume_keeps_child(void);
  */
 #define FPRINT_SLEEP_STATE_WAIT_MS 3000
 #define FPRINT_LATE_SPAWN_MS 1000
-bool fprint_spawn_allowed(bool sleeping, bool awaiting_sleep_state);
+bool fprint_spawn_allowed(bool sleeping, bool awaiting_sleep_state,
+		bool lid_closed);
 bool fprint_spawn_is_too_late(int64_t spawned_ms, int64_t now_ms);
 
 #endif

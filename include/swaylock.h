@@ -481,11 +481,13 @@ struct swaylock_state {
 	int fprint_fd; // notification pipe read end, -1 when closed
 	bool fprint_rearm_active; // resume re-arm window open (respawns allowed)
 	int fprint_retry_attempt; // ladder retries scheduled in the current re-arm
+	bool fprint_restart_requested; // at most one privileged recovery per re-arm
 	struct loop_timer *fprint_retry_timer; // pending re-arm respawn, NULL when none
 	struct loop_timer *fprint_window_timer; // closes the re-arm window, NULL when none
 	/* Sleep gating: no child while a suspend is under way, and none before the
 	 * sleep watcher has reported whether one is (see fprint.h). */
 	bool fprint_sleeping; // PrepareForSleep(true) seen, no resume yet
+	bool fprint_lid_closed; // logind reports the laptop lid is closed
 	bool fprint_awaiting_sleep_state; // waiting for the watcher's startup report
 	struct loop_timer *fprint_sleep_state_timer; // bounds that wait, NULL when none
 	int64_t fprint_spawned_ms; // CLOCK_MONOTONIC time of the last spawn

@@ -254,10 +254,11 @@ static void test_kill_barrier_confirms_exit(void) {
 /* A child may not be spawned while a suspend is under way, nor before the
  * sleep watcher has said whether one is. */
 static void test_sleep_gate_blocks_spawn(void) {
-	CHECK(fprint_spawn_allowed(false, false));
-	CHECK(!fprint_spawn_allowed(true, false));
-	CHECK(!fprint_spawn_allowed(false, true));
-	CHECK(!fprint_spawn_allowed(true, true));
+	CHECK(fprint_spawn_allowed(false, false, false));
+	CHECK(!fprint_spawn_allowed(true, false, false));
+	CHECK(!fprint_spawn_allowed(false, true, false));
+	CHECK(!fprint_spawn_allowed(true, true, false));
+	CHECK(!fprint_spawn_allowed(false, false, true));
 }
 
 /* Only a child spawned under FPRINT_LATE_SPAWN_MS before ENTER is stopped. */

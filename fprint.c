@@ -40,8 +40,9 @@ bool fprint_resume_keeps_child(void) {
 	return false;
 }
 
-bool fprint_spawn_allowed(bool sleeping, bool awaiting_sleep_state) {
-	return !sleeping && !awaiting_sleep_state;
+bool fprint_spawn_allowed(bool sleeping, bool awaiting_sleep_state,
+		bool lid_closed) {
+	return !sleeping && !awaiting_sleep_state && !lid_closed;
 }
 
 bool fprint_spawn_is_too_late(int64_t spawned_ms, int64_t now_ms) {
@@ -394,6 +395,11 @@ void run_fprint_backend_child(int notify_fd) {
 				swaylock_log(LOG_ERROR,
 					"fingerprint unavailable (pam status %d)", status);
 				logged_unavailable = true;
+				if (!write_byte(notify_fd, FPRINT_MSG_UNAVAILABLE)) {
+					swaylock_log_errno(LOG_ERROR,
+						"fingerprint: failed to report unavailable service");
+					_exit(EXIT_FAILURE);
+				}
 			} else {
 				swaylock_log(LOG_DEBUG,
 					"fingerprint unavailable (pam status %d)", status);

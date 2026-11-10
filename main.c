@@ -1536,6 +1536,19 @@ static void stop_fprint_backend(struct swaylock_state *state) {
 static void schedule_fprint_retry(struct swaylock_state *state);
 static void fprint_retry_timeout(void *data);
 
+static bool request_fprintd_restart(void) {
+	pid_t pid;
+	char *argv[] = {"sudo", "-n", "/usr/local/libexec/locker-fingerprint",
+		"rearm", NULL};
+	int rc = posix_spawnp(&pid, "sudo", NULL, NULL, argv, environ);
+	if (rc != 0) {
+		swaylock_log(LOG_ERROR,
+			"Failed to request the bounded fprintd recovery: %s", strerror(rc));
+		return false;
+	}
+	return true;
+}
+
 static int64_t monotonic_ms(void) {
 	struct timespec ts;
 	clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -1550,7 +1563,7 @@ static bool start_fprint_backend(struct swaylock_state *state) {
 		return true;
 	}
 	if (!fprint_spawn_allowed(state->fprint_sleeping,
-			state->fprint_awaiting_sleep_state)) {
+			state->fprint_awaiting_sleep_state, state->fprint_lid_closed)) {
 		return true;
 	}
 	if (state->fprint_pidfd >= 0) {
@@ -1569,7 +1582,7 @@ static bool start_fprint_backend(struct swaylock_state *state) {
 	if (!fprint_spawn_child(NULL, &pidfd, &fd, scrub_password_for_fprint_child,
 			&state->password)) {
 		swaylock_log(LOG_ERROR, "Failed to start fingerprint backend");
-		return true;
+		return false;
 	}
 	state->fprint_pidfd = pidfd;
 	state->fprint_fd = fd;
@@ -1628,9 +1641,23 @@ static void schedule_fprint_retry(struct swaylock_state *state) {
 	}
 	int delay = fprint_rearm_retry_delay_ms(state->fprint_retry_attempt);
 	if (delay < 0) {
+		if (!state->fprint_restart_requested) {
+			state->fprint_restart_requested = true;
+			state->fprint_retry_attempt = 0;
+			swaylock_log(LOG_ERROR,
+				"Fingerprint re-arm still failing; requesting one fprintd restart");
+			if (!request_fprintd_restart()) {
+				swaylock_log(LOG_ERROR,
+					"Fingerprint restart request could not be launched");
+			}
+			arm_fprint_retry(state, 2000);
+			return;
+		}
 		swaylock_log(LOG_ERROR,
-			"Fingerprint re-arm failed after %d retries; password unlock still works",
+			"Fingerprint re-arm gave up after %d recovery retries; password unlock still works",
 			FPRINT_REARM_MAX_RETRIES);
+		state->auth_state = AUTH_STATE_INVALID;
+		damage_state(state);
 		end_fprint_rearm(state);
 		return;
 	}
@@ -1668,9 +1695,21 @@ static void fprint_in(int fd, short mask, void *data) {
 			state->run_display = false;
 		} else if (msg == FPRINT_MSG_MISMATCH) {
 			swaylock_log(LOG_DEBUG, "Fingerprint not recognized");
+			if (state->fprint_rearm_active) {
+				swaylock_log(LOG_INFO,
+					"Fingerprint re-arm verified: PAM verify returned a mismatch");
+				end_fprint_rearm(state);
+			}
 			state->auth_state = AUTH_STATE_INVALID;
 			schedule_auth_idle(state);
 			damage_state(state);
+		} else if (msg == FPRINT_MSG_UNAVAILABLE) {
+			swaylock_log(LOG_ERROR,
+				"Fingerprint re-arm attempt unavailable (PAM/device error)");
+			if (state->fprint_rearm_active) {
+				stop_fprint_backend(state);
+				schedule_fprint_retry(state);
+			}
 		} else {
 			swaylock_log(LOG_ERROR,
 				"Unexpected message from fingerprint backend: %d", (int)msg);
@@ -2464,6 +2503,7 @@ static bool write_byte_nosigpipe(int fd, char byte) {
 static void rearm_fprint_on_resume(struct swaylock_state *state) {
 	end_fprint_rearm(state);
 	state->fprint_retry_attempt = 0;
+	state->fprint_restart_requested = false;
 	/* A child that survived suspend holds a stale fprintd claim. fprintd
 	 * aborts its verify on suspend ("Cannot run while suspended") but leaves
 	 * the claim busy, so the child can neither succeed nor release the reader
@@ -2483,6 +2523,11 @@ static void rearm_fprint_on_resume(struct swaylock_state *state) {
 	state->fprint_rearm_active = true;
 	state->fprint_window_timer = loop_add_timer(state->eventloop,
 		FPRINT_REARM_WINDOW_MS, fprint_window_timeout, state);
+	if (state->fprint_lid_closed) {
+		swaylock_log(LOG_INFO,
+			"Fingerprint re-arm deferred until logind reports lid open");
+		return;
+	}
 	arm_fprint_retry(state, FPRINT_REARM_FIRST_DELAY_MS);
 }
 
@@ -2490,7 +2535,18 @@ static void sleep_in(int fd, short mask, void *data) {
 	struct swaylock_state *state = data;
 	char msg = 0;
 	ssize_t n = read(fd, &msg, 1);
-	if (n == 1 && msg == SLEEP_COMM_ENTER) {
+	if (n == 1 && msg == SLEEP_COMM_LID_CLOSED) {
+		state->fprint_lid_closed = true;
+		swaylock_log(LOG_INFO, "Fingerprint paused: logind reports lid closed");
+		end_fprint_rearm(state);
+		stop_fprint_backend(state);
+	} else if (n == 1 && msg == SLEEP_COMM_LID_OPEN) {
+		state->fprint_lid_closed = false;
+		swaylock_log(LOG_INFO, "Fingerprint resumed: logind reports lid open");
+		if (state->fprint_enabled && !state->fprint_sleeping) {
+			rearm_fprint_on_resume(state);
+		}
+	} else if (n == 1 && msg == SLEEP_COMM_ENTER) {
 		swaylock_log(LOG_DEBUG, "Received sleep notification");
 		cancel_grace_timer(state);
 		end_fprint_rearm(state);

@@ -29,5 +29,7 @@ bool set_cloexec(int fd);
  * already in progress is reported with SLEEP_COMM_ENTER instead. The locker
  * holds the fingerprint spawn until one of the two arrives. */
 #define SLEEP_COMM_IDLE 'I'
+#define SLEEP_COMM_LID_CLOSED 'C'
+#define SLEEP_COMM_LID_OPEN 'O'
 
 #endif

@@ -23,6 +23,7 @@
 #define DBUS_LOGIND_SERVICE "org.freedesktop.login1"
 #define DBUS_LOGIND_PATH "/org/freedesktop/login1"
 #define DBUS_LOGIND_MANAGER_INTERFACE "org.freedesktop.login1.Manager"
+#define DBUS_PROPERTIES_INTERFACE "org.freedesktop.DBus.Properties"
 #define DBUS_LOGIND_SESSION_INTERFACE "org.freedesktop.login1.Session"
 
 struct state {
@@ -33,7 +34,68 @@ struct state {
 	int notify_fd;
 	/* Read end of the pipe swaylock-plugin writes its acknowledgement to. */
 	int ack_fd;
+	bool lid_closed;
 };
+
+static bool write_byte(int fd, char byte);
+
+static void report_lid_state(struct state *state, bool closed) {
+	state->lid_closed = closed;
+	char msg = closed ? SLEEP_COMM_LID_CLOSED : SLEEP_COMM_LID_OPEN;
+	if (!write_byte(state->notify_fd, msg)) {
+		swaylock_log_errno(LOG_ERROR, "Failed to report logind LidClosed state");
+	} else {
+		swaylock_log(LOG_DEBUG, "logind LidClosed=%s", closed ? "true" : "false");
+	}
+}
+
+static int lid_properties_changed(sd_bus_message *msg, void *userdata,
+		sd_bus_error *ret_error) {
+	struct state *state = userdata;
+	const char *interface = NULL;
+	int ret = sd_bus_message_read(msg, "s", &interface);
+	if (ret < 0 || strcmp(interface, DBUS_LOGIND_MANAGER_INTERFACE) != 0) {
+		return 0;
+	}
+	ret = sd_bus_message_enter_container(msg, 'a', "{sv}");
+	if (ret < 0) return 0;
+	while ((ret = sd_bus_message_enter_container(msg, 'e', "sv")) > 0) {
+		const char *name = NULL;
+		int closed = 0;
+		if (sd_bus_message_read(msg, "s", &name) <= 0) {
+			sd_bus_message_exit_container(msg);
+			continue;
+		}
+		if (strcmp(name, "LidClosed") == 0) {
+			if (sd_bus_message_enter_container(msg, 'v', "b") > 0 &&
+					sd_bus_message_read(msg, "b", &closed) > 0) {
+				if (state->lid_closed != (closed != 0)) {
+					report_lid_state(state, closed != 0);
+				}
+				sd_bus_message_exit_container(msg);
+			}
+		} else {
+			sd_bus_message_skip(msg, "v");
+		}
+		sd_bus_message_exit_container(msg);
+	}
+	return 0;
+}
+
+static void report_startup_lid_state(struct state *state) {
+	sd_bus_error error = SD_BUS_ERROR_NULL;
+	int closed = 0;
+	int ret = sd_bus_get_property_trivial(state->bus, DBUS_LOGIND_SERVICE,
+		DBUS_LOGIND_PATH, DBUS_LOGIND_MANAGER_INTERFACE, "LidClosed",
+		&error, 'b', &closed);
+	if (ret < 0) {
+		swaylock_log(LOG_ERROR, "Failed to read LidClosed: %s", error.message);
+		sd_bus_error_free(&error);
+		return;
+	}
+	sd_bus_error_free(&error);
+	report_lid_state(state, closed != 0);
+}
 
 static bool write_byte(int fd, char byte) {
 	while (true) {
@@ -246,9 +308,18 @@ int run(int notify_fd, int ack_fd) {
 		swaylock_log_errno(LOG_ERROR, "Failed to add D-Bus signal match : sleep");
 		return EXIT_FAILURE;
 	}
+	ret = sd_bus_match_signal(state.bus, NULL, DBUS_LOGIND_SERVICE,
+		DBUS_LOGIND_PATH, DBUS_PROPERTIES_INTERFACE, "PropertiesChanged",
+		lid_properties_changed, &state);
+	if (ret < 0) {
+		errno = -ret;
+		swaylock_log_errno(LOG_ERROR, "Failed to watch logind LidClosed");
+		return EXIT_FAILURE;
+	}
 	acquire_inhibitor_lock(&state, "sleep", "delay");
 	/* The match is registered above, so a PrepareForSleep arriving from now on
 	 * is queued for the loop below. */
+	report_startup_lid_state(&state);
 	report_startup_sleep_state(&state);
 
 	struct pollfd pfds[2];
